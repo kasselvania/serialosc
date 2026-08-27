@@ -65,8 +65,8 @@ Version 1 OSC type tags are fixed:
 | `/sys/lease/state` | `isssisii` |
 | `/sys/lease/acquire` | `ssisi` |
 | `/sys/lease/takeover` | `ssisi` |
-| `/sys/lease/renew` | `si` |
-| `/sys/lease/release` | `s` |
+| `/sys/lease/renew` | `sisi` |
+| `/sys/lease/release` | `ssi` |
 | `/sys/lease/granted` | `si` |
 | `/sys/lease/renewed` | `si` |
 | `/sys/lease/released` | `s` |
@@ -122,16 +122,19 @@ permission to take it over.
 
 ```text
 /sys/lease/renew <token:string> <ttl-ms:int>
+                 <reply-host:string> <reply-port:int>
 ```
 
 Only the matching active token can renew. The new monotonic deadline is the
 time the server accepts the request plus the supplied TTL. A late renewal is
-rejected after expiry cleanup; it cannot resurrect the old session.
+rejected after expiry cleanup; it cannot resurrect the old session. The
+explicit reply target lets the server report `no_lease` after the old runtime
+destination has already been cleared.
 
 ### Release
 
 ```text
-/sys/lease/release <token:string>
+/sys/lease/release <token:string> <reply-host:string> <reply-port:int>
 ```
 
 Only the matching active token can release. Release darkens the supported
@@ -142,8 +145,9 @@ idempotent success condition.
 
 ### Replies
 
-Replies go to the requested lease destination, or to the captured leased
-destination for renew and release:
+Replies to `info`, `acquire`, `takeover`, `renew`, and `release` go to the
+explicit callback carried by that request. Only the best-effort `lost`
+notification uses the captured leased destination:
 
 ```text
 /sys/lease/granted  <token:string> <ttl-ms:int>
