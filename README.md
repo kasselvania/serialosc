@@ -38,6 +38,10 @@ cmake project is currently configured to build statically linked binaries using 
 
 https://monome.org/docs/serialosc
 
+The `feature/leased-destinations` branch contains an opt-in proposal for
+crash-safe application callback expiry. It is not part of an upstream release;
+see [docs/leased-destinations.md](docs/leased-destinations.md).
+
 ## preference file locations
 
 - linux: `$HOME/.config/serialosc`
