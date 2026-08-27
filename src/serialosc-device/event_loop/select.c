@@ -18,6 +18,7 @@
 #include <errno.h>
 #include <sys/select.h>
 
+#include <serialosc/lease_runtime.h>
 #include <serialosc/serialosc.h>
 #include <serialosc/ipc.h>
 
@@ -44,6 +45,9 @@ sosc_event_loop(struct sosc_state *state)
 {
 	int max_fd, monome_fd, osc_fd, ipc_fd;
 	fd_set rfds, efds;
+	struct timeval lease_timeout;
+	struct timeval *timeout;
+	int timeout_ms;
 
 	monome_fd = monome_get_fd(state->monome);
 	osc_fd    = lo_server_get_socket_fd(state->server);
@@ -65,9 +69,17 @@ sosc_event_loop(struct sosc_state *state)
 
 		FD_ZERO(&efds);
 		FD_SET(monome_fd, &efds);
+		timeout_ms = sosc_runtime_lease_timeout_ms(state);
+		if (timeout_ms < 0) {
+			timeout = NULL;
+		} else {
+			lease_timeout.tv_sec = timeout_ms / 1000;
+			lease_timeout.tv_usec = (timeout_ms % 1000) * 1000;
+			timeout = &lease_timeout;
+		}
 
 		/* block until either the monome or liblo have data */
-		if (select(max_fd, &rfds, NULL, &efds, NULL) < 0)
+		if (select(max_fd, &rfds, NULL, &efds, timeout) < 0)
 			switch (errno) {
 			case EBADF:
 			case EINVAL:
@@ -77,6 +89,9 @@ sosc_event_loop(struct sosc_state *state)
 			case EINTR:
 				continue;
 			}
+
+		/* Expiry wins a race with a renewal arriving at the deadline. */
+		sosc_runtime_expire_lease_if_due(state);
 
 		/* is the monome still connected? */
 		if (FD_ISSET(monome_fd, &efds))

@@ -25,6 +25,7 @@
 				 lo_message data, void *user_data)
 
 void osc_register_sys_methods(sosc_state_t *state);
+void osc_register_lease_methods(sosc_state_t *state);
 
 void osc_register_methods(sosc_state_t *state);
 void osc_unregister_methods(sosc_state_t *state);

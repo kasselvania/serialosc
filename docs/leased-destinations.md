@@ -1,7 +1,9 @@
 # Leased application destinations
 
-Status: design proposal for an opt-in SerialOSC extension. This document does
-not describe behavior in an upstream SerialOSC release.
+Status: implemented and automatically tested on the
+`feature/leased-destinations` fork branch. Physical and host-lifecycle
+acceptance is still pending. This document does not describe behavior in an
+upstream SerialOSC release.
 
 ## Problem
 
@@ -165,6 +167,14 @@ Version 1 rejection reasons are:
 - `claim_mismatch`
 - `not_owner`
 - `no_lease`
+- `device_error`
+- `server_error`
+
+`device_error` means the worker could not complete the requested hardware
+output reset. `server_error` means it could not allocate the runtime state
+needed for the transition. Neither result is a grant. A release may report
+`device_error` after it has still cleared the dead callback; clients must query
+state rather than interpreting that error as continued ownership.
 
 `lost` is a best-effort notification sent to the old leased destination before
 a legacy write displaces it or before expiry clears it. Correct cleanup cannot
@@ -223,9 +233,9 @@ PlugData must continue to perform exact readback and report displacement. The
 lease closes the dead-client cleanup gap; it does not justify silently taking
 another application's device.
 
-## Implementation boundary
+## Implementation
 
-The production change requires:
+The fork implementation includes:
 
 - lease state in `sosc_state_t` separate from persisted legacy state;
 - validation and atomic transition helpers shared by OSC handlers and timers;
@@ -238,6 +248,19 @@ The production change requires:
 
 No lease logic belongs in `serialoscd`: each `serialosc-device` worker owns one
 physical device, its outgoing destination, and its expiry.
+
+The CMake test suite currently proves the timer core, runtime state and
+persistence boundary, real loopback OSC messages, legacy displacement, safe
+port-`0` readback, Grid/four-index Arc darkening, and deadline wakeup without
+incoming traffic:
+
+```sh
+cmake -S . -B build -Dbuild_with_zeroconf=OFF
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+These tests are not physical-device or DAW-host acceptance.
 
 ## Acceptance matrix
 

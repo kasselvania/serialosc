@@ -31,6 +31,7 @@
 #include <monome.h>
 
 #include <serialosc/serialosc.h>
+#include <serialosc/lease_runtime.h>
 #include <serialosc/osc.h>
 #include <serialosc/ipc.h>
 
@@ -68,7 +69,9 @@ handle_press(const monome_event_t *e, void *data)
 	sosc_state_t *state = data;
 	char *cmd;
 
-	cmd = osc_path("grid/key", state->config.app.osc_prefix);
+	if (state->destination_port == 0)
+		return;
+	cmd = osc_path("grid/key", state->osc_prefix);
 	lo_send_from(state->outgoing, state->server, LO_TT_IMMEDIATE, cmd, "iii",
 	             e->grid.x, e->grid.y, e->event_type == MONOME_BUTTON_DOWN);
 	s_free(cmd);
@@ -80,7 +83,9 @@ handle_enc_delta(const monome_event_t *e, void *data)
 	sosc_state_t *state = data;
 	char *cmd;
 
-	cmd = osc_path("enc/delta", state->config.app.osc_prefix);
+	if (state->destination_port == 0)
+		return;
+	cmd = osc_path("enc/delta", state->osc_prefix);
 	lo_send_from(state->outgoing, state->server, LO_TT_IMMEDIATE, cmd, "ii",
 	             e->encoder.number, e->encoder.delta);
 	s_free(cmd);
@@ -92,7 +97,9 @@ handle_enc_key(const monome_event_t *e, void *data)
 	sosc_state_t *state = data;
 	char *cmd;
 
-	cmd = osc_path("enc/key", state->config.app.osc_prefix);
+	if (state->destination_port == 0)
+		return;
+	cmd = osc_path("enc/key", state->osc_prefix);
 	lo_send_from(state->outgoing, state->server, LO_TT_IMMEDIATE, cmd, "ii",
 	             e->encoder.number, e->event_type == MONOME_ENCODER_KEY_DOWN);
 	s_free(cmd);
@@ -104,7 +111,9 @@ handle_tilt(const monome_event_t *e, void *data)
 	sosc_state_t *state = data;
 	char *cmd;
 
-	cmd = osc_path("tilt", state->config.app.osc_prefix);
+	if (state->destination_port == 0)
+		return;
+	cmd = osc_path("tilt", state->osc_prefix);
 	lo_send_from(state->outgoing, state->server, LO_TT_IMMEDIATE, cmd, "iiii",
 	             e->tilt.sensor, e->tilt.x, e->tilt.y, e->tilt.z);
 	s_free(cmd);
@@ -119,6 +128,8 @@ send_connection_status(sosc_state_t *state, int status)
 	};
 
 	cmd = cmds[status & 1];
+	if (state->destination_port == 0)
+		return;
 	lo_send_from(state->outgoing, state->server, LO_TT_IMMEDIATE, cmd, "");
 }
 
@@ -235,10 +246,9 @@ sosc_server_run(const char *config_dir, monome_t *monome)
 					lo_error)))
 		goto err_server_new;
 
-	if (!(state.outgoing = lo_address_new(
-				state.config.app.host, null_if_zero(state.config.app.port)))) {
+	if (sosc_runtime_init(&state)) {
 		fprintf(
-			stderr, "serialosc [%s]: couldn't allocate lo_address, aieee!\n",
+			stderr, "serialosc [%s]: couldn't initialize runtime destination\n",
 			monome_get_serial(state.monome));
 		goto err_lo_addr;
 	}
@@ -282,9 +292,12 @@ sosc_server_run(const char *config_dir, monome_t *monome)
 #undef HANDLE
 
 	monome_set_rotation(state.monome, state.config.dev.rotation);
-	monome_led_all(state.monome, 0);
+	if (sosc_runtime_dark_surface(&state))
+		fprintf(stderr, "serialosc [%s]: warning: could not dark all output\n",
+			monome_get_serial(state.monome));
 
 	osc_register_sys_methods(&state);
+	osc_register_lease_methods(&state);
 	osc_register_methods(&state);
 
 	if (state.ipc_out_fd < 0) {
@@ -320,7 +333,7 @@ sosc_server_run(const char *config_dir, monome_t *monome)
 	}
 
 err_svc_name:
-	lo_address_free(state.outgoing);
+	sosc_runtime_cleanup(&state);
 err_lo_addr:
 	lo_server_free(state.server);
 err_server_new:

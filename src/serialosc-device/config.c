@@ -121,7 +121,6 @@ sosc_config_write(const char *config_dir, const char *serial, sosc_state_t *stat
 {
 	cfg_t *cfg, *sec;
 	char *path;
-	const char *p;
 	FILE *f;
 
 	if (!serial)
@@ -147,9 +146,9 @@ sosc_config_write(const char *config_dir, const char *serial, sosc_state_t *stat
 
 	sec = cfg_getsec(cfg, "application");
 	cfg_setstr(sec, "osc_prefix", state->config.app.osc_prefix);
-	cfg_setstr(sec, "host", lo_address_get_hostname(state->outgoing));
-	p = lo_address_get_port(state->outgoing);
-	cfg_setint(sec, "port", strtol(p , NULL, 10));
+	cfg_setstr(sec, "host", state->config.app.host);
+	cfg_setint(sec, "port", state->config.app.port[0] ?
+		strtol(state->config.app.port, NULL, 10) : 0);
 
 	sec = cfg_getsec(cfg, "device");
 	cfg_setint(sec, "rotation", monome_get_rotation(state->monome) * 90);

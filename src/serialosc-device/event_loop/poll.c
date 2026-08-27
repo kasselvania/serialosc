@@ -18,6 +18,7 @@
 #include <errno.h>
 #include <poll.h>
 
+#include <serialosc/lease_runtime.h>
 #include <serialosc/serialosc.h>
 #include <serialosc/ipc.h>
 
@@ -43,7 +44,7 @@ int
 sosc_event_loop(struct sosc_state *state)
 {
 	struct pollfd fds[3];
-	int nfds;
+	int nfds, poll_result, timeout;
 
 	fds[0].fd = monome_get_fd(state->monome);
 	fds[0].events = POLLIN;
@@ -59,7 +60,9 @@ sosc_event_loop(struct sosc_state *state)
 
 	for (state->running = 1; state->running;) {
 		/* block until either the monome or liblo have data */
-		if (poll(fds, nfds, -1) < 0)
+		timeout = sosc_runtime_lease_timeout_ms(state);
+		poll_result = poll(fds, nfds, timeout);
+		if (poll_result < 0)
 			switch (errno) {
 			case EINVAL:
 				perror("error in poll()");
@@ -69,6 +72,9 @@ sosc_event_loop(struct sosc_state *state)
 			case EAGAIN:
 				continue;
 			}
+
+		/* Expiry wins a race with a renewal arriving at the deadline. */
+		sosc_runtime_expire_lease_if_due(state);
 
 		/* is the monome still connected? */
 		if (fds[0].revents & (POLLHUP | POLLERR))

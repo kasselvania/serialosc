@@ -26,12 +26,14 @@ def build(ctx):
 		obj('event_loop/select.c')
 
 	obj('osc/mext_methods.c')
+	obj('osc/lease_methods.c')
 	obj('osc/sys_methods.c')
 	obj('osc/util.c')
 
 	obj('server.c')
 	obj('config.c')
 	obj('lease.c')
+	obj('lease_runtime.c')
 
 	obj('main.c')
 

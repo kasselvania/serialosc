@@ -222,7 +222,7 @@ osc_register_methods(sosc_state_t *state)
 	monome_t *monome;
 	lo_server srv;
 
-	prefix = state->config.app.osc_prefix;
+	prefix = state->osc_prefix;
 	monome = state->monome;
 	srv = state->server;
 
@@ -307,7 +307,7 @@ osc_unregister_methods(sosc_state_t *state)
 	char *prefix, *cmd_buf;
 	lo_server srv;
 
-	prefix = state->config.app.osc_prefix;
+	prefix = state->osc_prefix;
 	srv = state->server;
 
 #define UNREGISTER(typetags) \
@@ -373,6 +373,9 @@ osc_unregister_methods(sosc_state_t *state)
 
 	METHOD("ring/range")
 		UNREGISTER("iiii");
+
+	METHOD("ring/intensity")
+		UNREGISTER("i");
 
 	METHOD("tilt/set")
 		UNREGISTER("ii");

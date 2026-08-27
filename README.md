@@ -38,9 +38,11 @@ cmake project is currently configured to build statically linked binaries using 
 
 https://monome.org/docs/serialosc
 
-The `feature/leased-destinations` branch contains an opt-in proposal for
-crash-safe application callback expiry. It is not part of an upstream release;
-see [docs/leased-destinations.md](docs/leased-destinations.md).
+The `feature/leased-destinations` branch implements and automatically tests an
+opt-in extension for crash-safe application callback expiry. Physical and
+DAW-host acceptance remains pending, and the extension is not part of an
+upstream release. See
+[docs/leased-destinations.md](docs/leased-destinations.md).
 
 ## preference file locations
 

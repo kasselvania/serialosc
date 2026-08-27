@@ -28,6 +28,7 @@
 #include <lo/lo.h>
 #include <monome.h>
 
+#include <serialosc/lease.h>
 #include <serialosc/platform.h>
 
 #define SOSC_SUPERVISOR_OSC_PORT "12002"
@@ -56,8 +57,11 @@ typedef struct sosc_state {
 	int running;
 
 	monome_t *monome;
-	lo_address *outgoing;
-	lo_server *server;
+	lo_address outgoing;
+	lo_server server;
+	char *osc_prefix;
+	int destination_port;
+	sosc_lease_t lease;
 
 	int ipc_in_fd;
 	int ipc_out_fd;

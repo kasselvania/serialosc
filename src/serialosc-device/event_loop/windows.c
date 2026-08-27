@@ -21,6 +21,7 @@
 #include <windows.h>
 #include <io.h>
 
+#include <serialosc/lease_runtime.h>
 #include <serialosc/serialosc.h>
 #include <serialosc/ipc.h>
 
@@ -122,9 +123,16 @@ static DWORD WINAPI
 osc_poll_thread(LPVOID arg)
 {
 	struct sosc_state *state = arg;
+	int timeout;
 
 	while (state->running) {
-		lo_server_recv(state->server);
+		/* Lease mutation and expiry both happen on this OSC thread, avoiding
+		 * a timer-thread race with the control handlers. */
+		timeout = sosc_runtime_lease_timeout_ms(state);
+		if (timeout < 0 || timeout > 250)
+			timeout = 250;
+		lo_server_recv_noblock(state->server, timeout);
+		sosc_runtime_expire_lease_if_due(state);
 	}
 
 	return 0;

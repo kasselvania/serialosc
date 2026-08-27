@@ -161,10 +161,12 @@ set_target_properties(serialosc-device PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMA
 
 target_sources(serialosc-device PRIVATE src/serialosc-device/config.c)
 target_sources(serialosc-device PRIVATE src/serialosc-device/lease.c)
+target_sources(serialosc-device PRIVATE src/serialosc-device/lease_runtime.c)
 target_sources(serialosc-device PRIVATE src/serialosc-device/server.c)
 target_sources(serialosc-device PRIVATE src/serialosc-device/main.c)
 target_sources(serialosc-device PRIVATE src/serialosc-device/osc/util.c)
 target_sources(serialosc-device PRIVATE src/serialosc-device/osc/sys_methods.c)
+target_sources(serialosc-device PRIVATE src/serialosc-device/osc/lease_methods.c)
 target_sources(serialosc-device PRIVATE src/serialosc-device/osc/mext_methods.c)
 
 if(WIN32)
@@ -195,11 +197,6 @@ if(build_with_zeroconf)
     endif()
 else()
     target_sources(serialosc-device PRIVATE src/serialosc-device/zeroconf/dummy.c)
-endif()
-
-# TODO: fix the actual warnings
-if(NOT MSVC)
-    target_compile_options(serialosc-device PRIVATE -Wno-incompatible-pointer-types)
 endif()
 
 target_include_directories(serialosc-device PRIVATE ${CMAKE_SOURCE_DIR}/third-party)
@@ -233,6 +230,60 @@ if(BUILD_TESTING)
         src/serialosc-device/lease.c)
     target_include_directories(serialosc-lease-test PRIVATE include)
     add_test(NAME serialosc-lease-test COMMAND serialosc-lease-test)
+
+    add_executable(serialosc-lease-runtime-test
+        tests/lease_runtime_test.c
+        src/serialosc-device/lease.c
+        src/serialosc-device/lease_runtime.c)
+    target_include_directories(serialosc-lease-runtime-test PRIVATE include)
+    target_link_libraries(serialosc-lease-runtime-test
+        serialosc_common liblo_static)
+    if(NOT MSVC)
+        target_compile_options(serialosc-lease-runtime-test PRIVATE
+            -Wall -Wextra -Werror)
+    endif()
+    add_test(NAME serialosc-lease-runtime-test
+        COMMAND serialosc-lease-runtime-test)
+
+    add_executable(serialosc-lease-osc-test
+        tests/lease_osc_test.c
+        src/serialosc-device/lease.c
+        src/serialosc-device/lease_runtime.c
+        src/serialosc-device/osc/lease_methods.c
+        src/serialosc-device/osc/sys_methods.c)
+    target_include_directories(serialosc-lease-osc-test PRIVATE include)
+    target_link_libraries(serialosc-lease-osc-test
+        serialosc_common liblo_static)
+    if(NOT MSVC)
+        target_compile_options(serialosc-lease-osc-test PRIVATE
+            -Wall -Wextra -Werror -Wno-unused-parameter)
+    endif()
+    add_test(NAME serialosc-lease-osc-test COMMAND serialosc-lease-osc-test)
+
+    if(NOT WIN32)
+        find_package(Threads REQUIRED)
+        add_executable(serialosc-lease-event-loop-test
+            tests/lease_event_loop_test.c
+            src/serialosc-device/lease.c
+            src/serialosc-device/lease_runtime.c)
+        if(HAVE_WORKING_POLL)
+            target_sources(serialosc-lease-event-loop-test PRIVATE
+                src/serialosc-device/event_loop/poll.c)
+        else()
+            target_sources(serialosc-lease-event-loop-test PRIVATE
+                src/serialosc-device/event_loop/select.c)
+        endif()
+        target_include_directories(serialosc-lease-event-loop-test PRIVATE
+            include)
+        target_link_libraries(serialosc-lease-event-loop-test
+            serialosc_common liblo_static Threads::Threads)
+        if(NOT MSVC)
+            target_compile_options(serialosc-lease-event-loop-test PRIVATE
+                -Wall -Wextra -Werror)
+        endif()
+        add_test(NAME serialosc-lease-event-loop-test
+            COMMAND serialosc-lease-event-loop-test)
+    endif()
 endif()
 
 message(STATUS "configuration summary:

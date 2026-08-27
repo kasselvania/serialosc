@@ -20,6 +20,7 @@
 #include <lo/lo.h>
 #include <monome.h>
 
+#include <serialosc/lease_runtime.h>
 #include <serialosc/serialosc.h>
 #include <serialosc/osc.h>
 
@@ -37,7 +38,7 @@ portstr(char *dest, int src)
  * /sys/info business
  *************************************************************************/
 
-typedef void (info_reply_func_t)(lo_address *, sosc_state_t *);
+typedef void (info_reply_func_t)(lo_address, sosc_state_t *);
 
 static int
 info_prop_handler(lo_arg **argv, int argc, void *user_data,
@@ -45,14 +46,21 @@ info_prop_handler(lo_arg **argv, int argc, void *user_data,
 	sosc_state_t *state = user_data;
 	const char *host = NULL;
 	char port[6];
-	lo_address *dst;
+	lo_address dst;
+	int reply_port = argv[argc - 1]->i;
+
+	sosc_runtime_expire_lease_if_due(state);
+	if (reply_port < 1 || reply_port > 65535)
+		return 1;
 
 	if (argc == 2)
 		host = &argv[0]->s;
 	else
 		host = lo_address_get_hostname(state->outgoing);
+	if (!host || !*host)
+		return 1;
 
-	portstr(port, argv[argc - 1]->i);
+	portstr(port, reply_port);
 
 	if (!(dst = lo_address_new(host, port))) {
 		fprintf(stderr, "sys_info_handler(): error in lo_address_new()");
@@ -69,12 +77,15 @@ static int
 info_prop_handler_default(void *user_data, info_reply_func_t cb)
 {
 	sosc_state_t *state = user_data;
+	sosc_runtime_expire_lease_if_due(state);
+	if (state->destination_port == 0)
+		return 0;
 	cb(state->outgoing, state);
 	return 0;
 }
 
 #define DECLARE_INFO_REPLY_FUNC(prop, typetag, ...)\
-	static void info_reply_##prop(lo_address *to, sosc_state_t *state) {\
+		static void info_reply_##prop(lo_address to, sosc_state_t *state) {\
 		lo_send_from(to, state->server, LO_TT_IMMEDIATE, "/sys/" #prop,\
 					 typetag, __VA_ARGS__);\
 	}
@@ -95,11 +106,11 @@ DECLARE_INFO_PROP(id, "s", monome_get_serial(state->monome))
 DECLARE_INFO_PROP(size, "ii", monome_get_cols(state->monome),
                   monome_get_rows(state->monome))
 DECLARE_INFO_PROP(host, "s", lo_address_get_hostname(state->outgoing))
-DECLARE_INFO_PROP(port, "i", atoi(lo_address_get_port(state->outgoing)))
-DECLARE_INFO_PROP(prefix, "s", state->config.app.osc_prefix)
+DECLARE_INFO_PROP(port, "i", state->destination_port)
+DECLARE_INFO_PROP(prefix, "s", state->osc_prefix)
 
 static void
-info_reply_rotation(lo_address *to, sosc_state_t *state)
+info_reply_rotation(lo_address to, sosc_state_t *state)
 {
 	if (monome_get_cols(state->monome) != monome_get_rows(state->monome))
 		info_reply_size(to, state);
@@ -111,7 +122,7 @@ info_reply_rotation(lo_address *to, sosc_state_t *state)
 DECLARE_INFO_HANDLERS(rotation);
 
 static void
-info_reply_all(lo_address *to, sosc_state_t *state)
+info_reply_all(lo_address to, sosc_state_t *state)
 {
 	info_reply_id(to, state);
 	info_reply_size(to, state);
@@ -173,7 +184,8 @@ OSC_HANDLER_FUNC(sys_cable_legacy_handler)
 		return 0;
 
 	monome_set_rotation(state->monome, new);
-	info_reply_rotation(state->outgoing, state);
+	if (state->destination_port != 0)
+		info_reply_rotation(state->outgoing, state);
 	return 0;
 }
 
@@ -189,27 +201,43 @@ OSC_HANDLER_FUNC(sys_rotation_handler)
 		return 0;
 
 	monome_set_rotation(state->monome, new);
-	info_reply_rotation(state->outgoing, state);
+	if (state->destination_port != 0)
+		info_reply_rotation(state->outgoing, state);
 	return 0;
 }
 
 OSC_HANDLER_FUNC(sys_port_handler)
 {
 	sosc_state_t *state = user_data;
-	lo_address *new, *old = state->outgoing;
+	lo_address new, old;
+	const char *host;
+	int new_port = argv[0]->i;
 	char port[6];
 
-	portstr(port, argv[0]->i);
+	if (new_port < 0 || new_port > 65535)
+		return 1;
+	host = lo_address_get_hostname(state->outgoing);
+	if (!host)
+		return 1;
+	portstr(port, new_port);
 
-	if (!(new = lo_address_new(lo_address_get_hostname(old), port))) {
+	if (!(new = lo_address_new(host, port))) {
 		fprintf(stderr, "sys_port_handler(): error in lo_address_new()\n");
 		return 1;
 	}
+	if (sosc_runtime_displace_lease_for_legacy(state)) {
+		lo_address_free(new);
+		return 1;
+	}
 
+	old = state->outgoing;
 	state->outgoing = new;
+	state->destination_port = new_port;
+	sosc_port_itos(state->config.app.port, new_port);
 
 	info_reply_port(old, state);
-	info_reply_port(new, state);
+	if (new_port != 0)
+		info_reply_port(new, state);
 
 	lo_address_free(old);
 
@@ -219,17 +247,37 @@ OSC_HANDLER_FUNC(sys_port_handler)
 OSC_HANDLER_FUNC(sys_host_handler)
 {
 	sosc_state_t *state = user_data;
-	lo_address *new, *old = state->outgoing;
+	lo_address new, old;
+	char *config_host;
+	char port[6];
+	const char *requested_host = &argv[0]->s;
 
-	if (!(new = lo_address_new(&argv[0]->s, lo_address_get_port(old)))) {
+	if (!*requested_host)
+		return 1;
+	portstr(port, state->destination_port);
+	new = lo_address_new(requested_host, port);
+	config_host = s_strdup(requested_host);
+	if (!new || !config_host) {
 		fprintf(stderr, "sys_host_handler(): error in lo_address_new()\n");
+		if (new)
+			lo_address_free(new);
+		s_free(config_host);
+		return 1;
+	}
+	if (sosc_runtime_displace_lease_for_legacy(state)) {
+		lo_address_free(new);
+		s_free(config_host);
 		return 1;
 	}
 
+	old = state->outgoing;
 	state->outgoing = new;
+	s_free(state->config.app.host);
+	state->config.app.host = config_host;
 
 	info_reply_host(old, state);
-	info_reply_host(new, state);
+	if (state->destination_port != 0)
+		info_reply_host(new, state);
 
 	lo_address_free(old);
 
@@ -239,19 +287,34 @@ OSC_HANDLER_FUNC(sys_host_handler)
 OSC_HANDLER_FUNC(sys_prefix_handler)
 {
 	sosc_state_t *state = user_data;
-	char *new, *old = state->config.app.osc_prefix;
+	char *new, *saved, *old;
 
 	if (argv[0]->s != '/')
 		/* prepend a slash */
 		new = s_asprintf("/%s", &argv[0]->s);
 	else
 		new = s_strdup(&argv[0]->s);
+	saved = new ? s_strdup(new) : NULL;
+	if (!new || !saved) {
+		s_free(new);
+		s_free(saved);
+		return 1;
+	}
+	if (sosc_runtime_displace_lease_for_legacy(state)) {
+		s_free(new);
+		s_free(saved);
+		return 1;
+	}
 
+	old = state->osc_prefix;
 	osc_unregister_methods(state);
-	state->config.app.osc_prefix = new;
+	state->osc_prefix = new;
 	osc_register_methods(state);
+	s_free(state->config.app.osc_prefix);
+	state->config.app.osc_prefix = saved;
 
-	info_reply_prefix(state->outgoing, state);
+	if (state->destination_port != 0)
+		info_reply_prefix(state->outgoing, state);
 
 	s_free(old);
 
