@@ -9,6 +9,8 @@ project(serialosc VERSION 1.4.8)
 
 set(CMAKE_C_STANDARD 17)
 
+include(CTest)
+
 message(STATUS "configuring libuv")
 
 add_subdirectory(third-party/libuv EXCLUDE_FROM_ALL)
@@ -27,6 +29,10 @@ message(STATUS "configuring liblo")
 # when loading third-party/liblo/cmake for compatibility reasons
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 set(WITH_STATIC ON)
+set(WITH_TESTS OFF)
+set(WITH_CPP_TESTS OFF)
+set(WITH_TOOLS OFF)
+set(WITH_EXAMPLES OFF)
 add_subdirectory(third-party/liblo/cmake EXCLUDE_FROM_ALL)
 
 message(STATUS "configuring serialosc")
@@ -154,6 +160,7 @@ add_executable(serialosc-device)
 set_target_properties(serialosc-device PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 target_sources(serialosc-device PRIVATE src/serialosc-device/config.c)
+target_sources(serialosc-device PRIVATE src/serialosc-device/lease.c)
 target_sources(serialosc-device PRIVATE src/serialosc-device/server.c)
 target_sources(serialosc-device PRIVATE src/serialosc-device/main.c)
 target_sources(serialosc-device PRIVATE src/serialosc-device/osc/util.c)
@@ -219,6 +226,14 @@ target_include_directories(serialoscd PRIVATE ${CMAKE_SOURCE_DIR}/third-party)
 target_compile_definitions(serialoscd PRIVATE VERSION="${PROJECT_VERSION}")
 target_compile_definitions(serialoscd PRIVATE GIT_COMMIT="${GIT_COMMIT}")
 target_link_libraries(serialoscd serialosc_common liblo_static uv_a)
+
+if(BUILD_TESTING)
+    add_executable(serialosc-lease-test
+        tests/lease_test.c
+        src/serialosc-device/lease.c)
+    target_include_directories(serialosc-lease-test PRIVATE include)
+    add_test(NAME serialosc-lease-test COMMAND serialosc-lease-test)
+endif()
 
 message(STATUS "configuration summary:
 

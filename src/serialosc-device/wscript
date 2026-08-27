@@ -31,6 +31,7 @@ def build(ctx):
 
 	obj('server.c')
 	obj('config.c')
+	obj('lease.c')
 
 	obj('main.c')
 
