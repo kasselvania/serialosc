@@ -181,12 +181,15 @@ sosc_runtime_dark_surface(sosc_state_t *state)
 	int ring;
 	int result = 0;
 
+	/* libmonome's series/40h protocols return zero after a successful write,
+	 * while mext/OSC return a positive byte count. Only a negative result is
+	 * a device-write failure. */
 	if (monome_get_cols(state->monome) > 0 &&
 			monome_get_rows(state->monome) > 0)
-		return monome_led_all(state->monome, 0);
+		return monome_led_all(state->monome, 0) < 0;
 
 	for (ring = 0; ring < SOSC_ARC_MAX_RINGS; ring++)
-		if (monome_led_ring_all(state->monome, ring, 0))
+		if (monome_led_ring_all(state->monome, ring, 0) < 0)
 			result = 1;
 	return result;
 }

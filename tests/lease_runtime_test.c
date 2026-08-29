@@ -31,7 +31,7 @@ struct monome {
 	int rows;
 	int grid_clears;
 	int ring_clears;
-	int fail_dark;
+	int dark_result;
 };
 
 static int registered;
@@ -61,7 +61,7 @@ monome_led_all(monome_t *monome, unsigned int status)
 {
 	assert(status == 0);
 	monome->grid_clears++;
-	return monome->fail_dark;
+	return monome->dark_result;
 }
 
 int
@@ -71,7 +71,7 @@ monome_led_ring_all(monome_t *monome, unsigned int ring,
 	assert(ring < 4);
 	assert(level == 0);
 	monome->ring_clears++;
-	return monome->fail_dark;
+	return monome->dark_result;
 }
 
 void
@@ -197,16 +197,32 @@ test_expiry_restores_free(void)
 }
 
 static void
-test_arc_and_dark_failure(void)
+test_arc_and_dark_results(void)
 {
 	monome_t arc = {0};
-	monome_t broken_grid = {.cols = 16, .rows = 8, .fail_dark = 1};
+	monome_t positive_grid = {.cols = 16, .rows = 8, .dark_result = 3};
+	monome_t positive_arc = {.dark_result = 3};
+	monome_t broken_grid = {.cols = 16, .rows = 8, .dark_result = -1};
 	sosc_state_t state;
 
 	state_init(&state, &arc, 0);
 	assert(!sosc_runtime_dark_surface(&state));
 	assert(arc.grid_clears == 0);
 	assert(arc.ring_clears == 4);
+	state_cleanup(&state);
+
+	state_init(&state, &positive_grid, 0);
+	assert(sosc_runtime_lease_acquire(&state, "session-a", "127.0.0.1",
+		9001, "/leased", 6000, 0) == SOSC_LEASE_RESULT_GRANTED);
+	assert(positive_grid.grid_clears == 1);
+	assert(sosc_runtime_lease_release(&state, "session-a") ==
+		SOSC_LEASE_RESULT_GRANTED);
+	assert(positive_grid.grid_clears == 2);
+	state_cleanup(&state);
+
+	state_init(&state, &positive_arc, 0);
+	assert(!sosc_runtime_dark_surface(&state));
+	assert(positive_arc.ring_clears == 4);
 	state_cleanup(&state);
 
 	state_init(&state, &broken_grid, 0);
@@ -217,11 +233,11 @@ test_arc_and_dark_failure(void)
 	assert(strcmp(state.osc_prefix, "/saved") == 0);
 	state_cleanup(&state);
 
-	broken_grid.fail_dark = 0;
+	broken_grid.dark_result = 0;
 	state_init(&state, &broken_grid, 0);
 	assert(sosc_runtime_lease_acquire(&state, "session-a", "127.0.0.1",
 		9001, "/leased", 6000, 0) == SOSC_LEASE_RESULT_GRANTED);
-	broken_grid.fail_dark = 1;
+	broken_grid.dark_result = -1;
 	assert(sosc_runtime_lease_release(&state, "session-a") ==
 		SOSC_LEASE_RESULT_DEVICE_ERROR);
 	assert(!state.lease.active);
@@ -235,7 +251,7 @@ main(void)
 	test_grid_lifecycle();
 	test_legacy_takeover_and_displacement();
 	test_expiry_restores_free();
-	test_arc_and_dark_failure();
+	test_arc_and_dark_results();
 	puts("lease_runtime_test: passed");
 	return 0;
 }
