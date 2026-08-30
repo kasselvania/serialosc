@@ -76,12 +76,16 @@ iterate_devices(void *context, io_iterator_t iter)
 {
 	io_service_t device;
 	io_struct_inband_t devnode;
-	unsigned int len = 256;
 
 	while ((device = IOIteratorNext(iter))) {
-		IORegistryEntryGetProperty(device, kIODialinDeviceKey, devnode, &len);
+		/* IORegistryEntryGetProperty updates len to the returned property size.
+		 * Reset it for every entry so one short serial path cannot prevent a
+		 * later, longer path from being read. */
+		unsigned int len = sizeof(devnode);
+		kern_return_t result = IORegistryEntryGetProperty(
+			device, kIODialinDeviceKey, devnode, &len);
 
-		if (!wait_on_parent_usbdevice(device))
+		if (result == KERN_SUCCESS && !wait_on_parent_usbdevice(device))
 			send_connect(devnode);
 
 		IOObjectRelease(device);
