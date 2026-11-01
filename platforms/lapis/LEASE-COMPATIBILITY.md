@@ -42,3 +42,10 @@ The retired Lapis main-based prototype had none of the lease changes. Do not ide
 ## PlugData implementation detail: release is not a destructor guarantee
 
 The feature branch implements lease acquire/renew/release and verification in monome_session.lua; monome-session-core.pd_lua forwards those controls into the Pd/Lua session. Explicit release sends /sys/lease/release with the session token and callback endpoint. However, the Pd/Lua finalize() calls session:abandon(), which releases the local claim and clears local lease/request flags; it does NOT send or verify a remote release. It warns when destroyed while connected/claiming/releasing. Unexpected patch or host teardown therefore relies on lease renewal stopping and the daemon expiring/darkening the device, not a guaranteed close-time release packet. Lapis integration must retain this distinction and test actual PlugData/host scheduling.
+
+## Audit gaps that block a production claim
+
+- Abrupt worker death: acquisition clears the saved callback in memory, but config.c writes the file only on normal worker exit/disconnect. A worker SIGKILL/crash/power loss can leave an older legacy nonzero callback on disk. Graceful reconnect evidence is not proof that every abrupt worker restart begins free. Client death with a surviving worker is the intended supported expiry case.
+- Arc darkening currently uses positive grid dimensions to identify a grid and otherwise iterates four ring indices. It does not independently query/verify the actual Arc ring count. Four-ring Mac evidence does not certify two-ring or unknown-device cleanup.
+- Top-level Release tests use assert() with side effects while NDEBUG removes assertions; the event-loop target also treats resulting unused variables as errors. The Lapis offline target explicitly keeps assertions enabled, but full Release testing needs correction and rerun before packaging.
+- Lease support does not by itself constrain tty selection, network reachability or Lapis startup sequencing.
