@@ -64,3 +64,7 @@ The feature branch implements lease acquire/renew/release and verification in mo
 The common client is monome_session.lua plus monome-session-core.pd_lua and monome-session.pd. Live grid/Arc slots opt into protocol lease, with scheduler-based 2000 ms renewal. plugmlr callbacks are 17879/17880, distinct from Grid workbench 17779/17780/17781 and Arc 17778/17782; command ports 17900/17901 are workbench controls, not lease discovery. All lease traffic addresses the selected device port. A later Bitwig Arc migration must replace the legacy connection abstraction explicitly; merely installing the lease server does not upgrade existing patches.
 
 The Mac accepted legacy/null-port-safe service and Mac lease candidate are separate installation roots/LaunchAgent labels. Preserve this stable/candidate separation in Lapis lifecycle design rather than using a Mac installer.
+
+### Release test correction on the Lapis branch
+
+The subsequent Lapis patch replaces side-effectful assert calls in all four lease test sources with always-on TEST_CHECK. A self-test verifies single evaluation and deliberate failure under NDEBUG. The standalone mocked harness now passes runtime/OSC plus both event-loop variants in Debug and Release (-O3 -DNDEBUG). This fixes the identified test-check suppression defect; top-level daemon configure/build remains unverified here, and this says nothing about physical hardware.

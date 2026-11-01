@@ -225,6 +225,15 @@ target_compile_definitions(serialoscd PRIVATE GIT_COMMIT="${GIT_COMMIT}")
 target_link_libraries(serialoscd serialosc_common liblo_static uv_a)
 
 if(BUILD_TESTING)
+    # Exercise the shared test check with NDEBUG even outside Release builds.
+    add_executable(serialosc-test-check-test tests/test_check_test.c)
+    target_compile_definitions(serialosc-test-check-test PRIVATE NDEBUG)
+    add_test(NAME serialosc-test-check-test COMMAND serialosc-test-check-test)
+    add_test(NAME serialosc-test-check-negative-test
+        COMMAND ${CMAKE_COMMAND}
+            -DTEST_PROGRAM=$<TARGET_FILE:serialosc-test-check-test>
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_check_failure.cmake)
+
     add_executable(serialosc-lease-test
         tests/lease_test.c
         src/serialosc-device/lease.c)

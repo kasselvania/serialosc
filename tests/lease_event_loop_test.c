@@ -14,7 +14,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <assert.h>
+#include "test_check.h"
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -52,7 +52,7 @@ const char *monome_get_serial(monome_t *monome)
 }
 int monome_led_all(monome_t *monome, unsigned int status)
 {
-	assert(status == 0);
+	TEST_CHECK(status == 0);
 	monome->clears++;
 	monome->last_clear_ms = sosc_monotonic_ms();
 	return 0;
@@ -69,7 +69,7 @@ int monome_event_handle_next(monome_t *monome)
 {
 	char byte;
 
-	assert(read(monome->fd, &byte, 1) == 1);
+	TEST_CHECK(read(monome->fd, &byte, 1) == 1);
 	monome->state->running = 0;
 	return 1;
 }
@@ -94,7 +94,7 @@ wake_event_loop(void *data)
 	};
 
 	nanosleep(&delay, NULL);
-	assert(write(waker->fd, "x", 1) == 1);
+	TEST_CHECK(write(waker->fd, "x", 1) == 1);
 	return NULL;
 }
 
@@ -109,7 +109,7 @@ main(void)
 	uint64_t started;
 	uint64_t expiry_elapsed;
 
-	assert(pipe(pipe_fds) == 0);
+	TEST_CHECK(pipe(pipe_fds) == 0);
 	monome.fd = pipe_fds[0];
 	monome.state = &state;
 	state.monome = &monome;
@@ -118,28 +118,28 @@ main(void)
 	state.config.app.osc_prefix = s_strdup("/saved");
 	state.config.app.port[0] = '\0';
 	state.server = lo_server_new(NULL, lo_error);
-	assert(state.server);
-	assert(!sosc_runtime_init(&state));
-	assert(sosc_runtime_lease_acquire(&state, "session-a", "127.0.0.1",
+	TEST_CHECK(state.server);
+	TEST_CHECK(!sosc_runtime_init(&state));
+	TEST_CHECK(sosc_runtime_lease_acquire(&state, "session-a", "127.0.0.1",
 		9001, "/leased", 1000, 0) == SOSC_LEASE_RESULT_GRANTED);
-	assert(monome.clears == 1);
+	TEST_CHECK(monome.clears == 1);
 
 	started = sosc_monotonic_ms();
 	waker.fd = pipe_fds[1];
 	waker.delay_ms = 2200;
-	assert(pthread_create(&thread, NULL, wake_event_loop, &waker) == 0);
-	assert(sosc_event_loop(&state) == 0);
-	assert(pthread_join(thread, NULL) == 0);
+	TEST_CHECK(pthread_create(&thread, NULL, wake_event_loop, &waker) == 0);
+	TEST_CHECK(sosc_event_loop(&state) == 0);
+	TEST_CHECK(pthread_join(thread, NULL) == 0);
 
-	assert(monome.clears == 2);
+	TEST_CHECK(monome.clears == 2);
 	expiry_elapsed = monome.last_clear_ms - started;
-	assert(expiry_elapsed >= 900);
+	TEST_CHECK(expiry_elapsed >= 900);
 	/* Without a lease-aware select/poll timeout, cleanup would occur only
 	 * when the 2200 ms hardware wake arrives. */
-	assert(expiry_elapsed < 2000);
-	assert(!state.lease.active);
-	assert(state.destination_port == 0);
-	assert(!strcmp(state.osc_prefix, "/saved"));
+	TEST_CHECK(expiry_elapsed < 2000);
+	TEST_CHECK(!state.lease.active);
+	TEST_CHECK(state.destination_port == 0);
+	TEST_CHECK(!strcmp(state.osc_prefix, "/saved"));
 
 	sosc_runtime_cleanup(&state);
 	lo_server_free(state.server);

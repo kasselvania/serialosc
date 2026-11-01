@@ -16,7 +16,7 @@ From repository root:
     cmake --build build-lapis-offline
     ctest --test-dir build-lapis-offline --output-on-failure
 
-This separate CMake project builds only the pure lease timer/state test, not the top-level daemon or detector; Python tests use a synthetic filesystem. It requires CMake 3.27+, C17 compiler and Python 3. Source tree submodules are not needed for this offline target. Keep assertions enabled. A passing test is NOT daemon, USB, PlugData or power validation.
+This separate CMake project builds only the pure lease timer/state test, not the top-level daemon or detector; Python tests use a synthetic filesystem. It requires CMake 3.27+, C17 compiler and Python 3. Source tree submodules are not needed for this offline target. The test checks stay active even with NDEBUG. A passing test is NOT daemon, USB, PlugData or power validation.
 
 ## Passive sysfs inspection (separate from tests)
 
@@ -36,3 +36,5 @@ No default branch, existing Mac/Deck branch or kernel driver is changed by this 
 ## CI example (not enabled)
 
 ci-offline.example.yml describes x86-64/ARM64 GitHub checks using only the offline target. It is intentionally not installed under .github/workflows: the connected token lacks the workflow scope. No GitHub CI run or release publication is claimed.
+
+See ACCEPTANCE-GATES.md for required physical evidence and software-tests/ for a separate mocked runtime/loopback suite. These tests never substitute for the physical gates.

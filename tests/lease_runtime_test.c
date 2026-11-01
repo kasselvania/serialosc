@@ -14,7 +14,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <assert.h>
+#include "test_check.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -59,7 +59,7 @@ monome_get_serial(monome_t *monome)
 int
 monome_led_all(monome_t *monome, unsigned int status)
 {
-	assert(status == 0);
+	TEST_CHECK(status == 0);
 	monome->grid_clears++;
 	return monome->dark_result;
 }
@@ -68,8 +68,8 @@ int
 monome_led_ring_all(monome_t *monome, unsigned int ring,
 		unsigned int level)
 {
-	assert(ring < 4);
-	assert(level == 0);
+	TEST_CHECK(ring < 4);
+	TEST_CHECK(level == 0);
 	monome->ring_clears++;
 	return monome->dark_result;
 }
@@ -95,10 +95,10 @@ state_init(sosc_state_t *state, monome_t *monome, int port)
 	state->monome = monome;
 	state->config.app.host = s_strdup("127.0.0.1");
 	state->config.app.osc_prefix = s_strdup("/saved");
-	assert(state->config.app.host);
-	assert(state->config.app.osc_prefix);
+	TEST_CHECK(state->config.app.host);
+	TEST_CHECK(state->config.app.osc_prefix);
 	sosc_port_itos(state->config.app.port, port);
-	assert(!sosc_runtime_init(state));
+	TEST_CHECK(!sosc_runtime_init(state));
 }
 
 static void
@@ -118,35 +118,35 @@ test_grid_lifecycle(void)
 	registered = 0;
 	unregistered = 0;
 	state_init(&state, &monome, 0);
-	assert(strcmp(sosc_runtime_mode(&state), "free") == 0);
-	assert(state.destination_port == 0);
+	TEST_CHECK(strcmp(sosc_runtime_mode(&state), "free") == 0);
+	TEST_CHECK(state.destination_port == 0);
 
-	assert(sosc_runtime_lease_acquire(&state, "session-a", "127.0.0.1",
+	TEST_CHECK(sosc_runtime_lease_acquire(&state, "session-a", "127.0.0.1",
 		9001, "/leased", 6000, 0) == SOSC_LEASE_RESULT_GRANTED);
-	assert(monome.grid_clears == 1);
-	assert(state.lease.active);
-	assert(state.destination_port == 9001);
-	assert(strcmp(state.osc_prefix, "/leased") == 0);
-	assert(state.config.app.port[0] == '\0');
-	assert(registered == 1 && unregistered == 1);
+	TEST_CHECK(monome.grid_clears == 1);
+	TEST_CHECK(state.lease.active);
+	TEST_CHECK(state.destination_port == 9001);
+	TEST_CHECK(strcmp(state.osc_prefix, "/leased") == 0);
+	TEST_CHECK(state.config.app.port[0] == '\0');
+	TEST_CHECK(registered == 1 && unregistered == 1);
 
-	assert(sosc_runtime_lease_acquire(&state, "session-a", "127.0.0.1",
+	TEST_CHECK(sosc_runtime_lease_acquire(&state, "session-a", "127.0.0.1",
 		9001, "/leased", 5000, 0) == SOSC_LEASE_RESULT_GRANTED);
-	assert(monome.grid_clears == 1);
-	assert(sosc_runtime_lease_acquire(&state, "session-a", "127.0.0.1",
+	TEST_CHECK(monome.grid_clears == 1);
+	TEST_CHECK(sosc_runtime_lease_acquire(&state, "session-a", "127.0.0.1",
 		9002, "/leased", 5000, 0) ==
 		SOSC_LEASE_RESULT_CLAIM_MISMATCH);
-	assert(sosc_runtime_lease_acquire(&state, "session-b", "127.0.0.1",
+	TEST_CHECK(sosc_runtime_lease_acquire(&state, "session-b", "127.0.0.1",
 		9001, "/leased", 5000, 0) == SOSC_LEASE_RESULT_BUSY);
-	assert(sosc_runtime_lease_release(&state, "session-b") ==
+	TEST_CHECK(sosc_runtime_lease_release(&state, "session-b") ==
 		SOSC_LEASE_RESULT_NOT_OWNER);
-	assert(sosc_runtime_lease_release(&state, "session-a") ==
+	TEST_CHECK(sosc_runtime_lease_release(&state, "session-a") ==
 		SOSC_LEASE_RESULT_GRANTED);
-	assert(monome.grid_clears == 2);
-	assert(!state.lease.active);
-	assert(state.destination_port == 0);
-	assert(strcmp(state.osc_prefix, "/saved") == 0);
-	assert(strcmp(sosc_runtime_mode(&state), "free") == 0);
+	TEST_CHECK(monome.grid_clears == 2);
+	TEST_CHECK(!state.lease.active);
+	TEST_CHECK(state.destination_port == 0);
+	TEST_CHECK(strcmp(state.osc_prefix, "/saved") == 0);
+	TEST_CHECK(strcmp(sosc_runtime_mode(&state), "free") == 0);
 
 	state_cleanup(&state);
 }
@@ -158,21 +158,21 @@ test_legacy_takeover_and_displacement(void)
 	sosc_state_t state;
 
 	state_init(&state, &monome, 8000);
-	assert(strcmp(sosc_runtime_mode(&state), "legacy") == 0);
-	assert(sosc_runtime_lease_acquire(&state, "session-a", "127.0.0.1",
+	TEST_CHECK(strcmp(sosc_runtime_mode(&state), "legacy") == 0);
+	TEST_CHECK(sosc_runtime_lease_acquire(&state, "session-a", "127.0.0.1",
 		9001, "/leased", 6000, 0) ==
 		SOSC_LEASE_RESULT_LEGACY_DESTINATION);
-	assert(monome.grid_clears == 0);
-	assert(sosc_runtime_lease_acquire(&state, "session-a", "127.0.0.1",
+	TEST_CHECK(monome.grid_clears == 0);
+	TEST_CHECK(sosc_runtime_lease_acquire(&state, "session-a", "127.0.0.1",
 		9001, "/leased", 6000, 1) == SOSC_LEASE_RESULT_GRANTED);
-	assert(monome.grid_clears == 1);
-	assert(sosc_runtime_displace_lease_for_legacy(&state) == 0);
-	assert(!state.lease.active);
-	assert(strcmp(sosc_runtime_mode(&state), "legacy") == 0);
-	assert(strcmp(state.config.app.host, "127.0.0.1") == 0);
-	assert(strcmp(state.config.app.port, "9001") == 0);
-	assert(strcmp(state.config.app.osc_prefix, "/leased") == 0);
-	assert(monome.grid_clears == 1);
+	TEST_CHECK(monome.grid_clears == 1);
+	TEST_CHECK(sosc_runtime_displace_lease_for_legacy(&state) == 0);
+	TEST_CHECK(!state.lease.active);
+	TEST_CHECK(strcmp(sosc_runtime_mode(&state), "legacy") == 0);
+	TEST_CHECK(strcmp(state.config.app.host, "127.0.0.1") == 0);
+	TEST_CHECK(strcmp(state.config.app.port, "9001") == 0);
+	TEST_CHECK(strcmp(state.config.app.osc_prefix, "/leased") == 0);
+	TEST_CHECK(monome.grid_clears == 1);
 
 	state_cleanup(&state);
 }
@@ -184,14 +184,14 @@ test_expiry_restores_free(void)
 	sosc_state_t state;
 
 	state_init(&state, &monome, 0);
-	assert(sosc_runtime_lease_acquire(&state, "session-a", "127.0.0.1",
+	TEST_CHECK(sosc_runtime_lease_acquire(&state, "session-a", "127.0.0.1",
 		9001, "/leased", 6000, 0) == SOSC_LEASE_RESULT_GRANTED);
 	state.lease.deadline_ms = sosc_monotonic_ms();
-	assert(sosc_runtime_expire_lease_if_due(&state));
-	assert(monome.grid_clears == 2);
-	assert(state.destination_port == 0);
-	assert(strcmp(state.osc_prefix, "/saved") == 0);
-	assert(!state.lease.active);
+	TEST_CHECK(sosc_runtime_expire_lease_if_due(&state));
+	TEST_CHECK(monome.grid_clears == 2);
+	TEST_CHECK(state.destination_port == 0);
+	TEST_CHECK(strcmp(state.osc_prefix, "/saved") == 0);
+	TEST_CHECK(!state.lease.active);
 
 	state_cleanup(&state);
 }
@@ -206,42 +206,42 @@ test_arc_and_dark_results(void)
 	sosc_state_t state;
 
 	state_init(&state, &arc, 0);
-	assert(!sosc_runtime_dark_surface(&state));
-	assert(arc.grid_clears == 0);
-	assert(arc.ring_clears == 4);
+	TEST_CHECK(!sosc_runtime_dark_surface(&state));
+	TEST_CHECK(arc.grid_clears == 0);
+	TEST_CHECK(arc.ring_clears == 4);
 	state_cleanup(&state);
 
 	state_init(&state, &positive_grid, 0);
-	assert(sosc_runtime_lease_acquire(&state, "session-a", "127.0.0.1",
+	TEST_CHECK(sosc_runtime_lease_acquire(&state, "session-a", "127.0.0.1",
 		9001, "/leased", 6000, 0) == SOSC_LEASE_RESULT_GRANTED);
-	assert(positive_grid.grid_clears == 1);
-	assert(sosc_runtime_lease_release(&state, "session-a") ==
+	TEST_CHECK(positive_grid.grid_clears == 1);
+	TEST_CHECK(sosc_runtime_lease_release(&state, "session-a") ==
 		SOSC_LEASE_RESULT_GRANTED);
-	assert(positive_grid.grid_clears == 2);
+	TEST_CHECK(positive_grid.grid_clears == 2);
 	state_cleanup(&state);
 
 	state_init(&state, &positive_arc, 0);
-	assert(!sosc_runtime_dark_surface(&state));
-	assert(positive_arc.ring_clears == 4);
+	TEST_CHECK(!sosc_runtime_dark_surface(&state));
+	TEST_CHECK(positive_arc.ring_clears == 4);
 	state_cleanup(&state);
 
 	state_init(&state, &broken_grid, 0);
-	assert(sosc_runtime_lease_acquire(&state, "session-a", "127.0.0.1",
+	TEST_CHECK(sosc_runtime_lease_acquire(&state, "session-a", "127.0.0.1",
 		9001, "/leased", 6000, 0) == SOSC_LEASE_RESULT_DEVICE_ERROR);
-	assert(!state.lease.active);
-	assert(state.destination_port == 0);
-	assert(strcmp(state.osc_prefix, "/saved") == 0);
+	TEST_CHECK(!state.lease.active);
+	TEST_CHECK(state.destination_port == 0);
+	TEST_CHECK(strcmp(state.osc_prefix, "/saved") == 0);
 	state_cleanup(&state);
 
 	broken_grid.dark_result = 0;
 	state_init(&state, &broken_grid, 0);
-	assert(sosc_runtime_lease_acquire(&state, "session-a", "127.0.0.1",
+	TEST_CHECK(sosc_runtime_lease_acquire(&state, "session-a", "127.0.0.1",
 		9001, "/leased", 6000, 0) == SOSC_LEASE_RESULT_GRANTED);
 	broken_grid.dark_result = -1;
-	assert(sosc_runtime_lease_release(&state, "session-a") ==
+	TEST_CHECK(sosc_runtime_lease_release(&state, "session-a") ==
 		SOSC_LEASE_RESULT_DEVICE_ERROR);
-	assert(!state.lease.active);
-	assert(state.destination_port == 0);
+	TEST_CHECK(!state.lease.active);
+	TEST_CHECK(state.destination_port == 0);
 	state_cleanup(&state);
 }
 
