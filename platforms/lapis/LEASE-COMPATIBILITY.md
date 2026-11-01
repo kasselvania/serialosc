@@ -49,3 +49,18 @@ The feature branch implements lease acquire/renew/release and verification in mo
 - Arc darkening currently uses positive grid dimensions to identify a grid and otherwise iterates four ring indices. It does not independently query/verify the actual Arc ring count. Four-ring Mac evidence does not certify two-ring or unknown-device cleanup.
 - Top-level Release tests use assert() with side effects while NDEBUG removes assertions; the event-loop target also treats resulting unused variables as errors. The Lapis offline target explicitly keeps assertions enabled, but full Release testing needs correction and rerun before packaging.
 - Lease support does not by itself constrain tty selection, network reachability or Lapis startup sequencing.
+
+## Related application inventory
+
+| Application/ref inspected | Lease client status |
+| --- | --- |
+| PlugData-Monome-Devices main d904451 | Legacy guarded release only; no lease wire protocol |
+| PlugData-Monome-Devices feature/serialosc-leases 09c820e | Opt-in lease state machine and workbenches |
+| PlugData-Monome-Devices codex/workbench-selection-recovery 18b4893 | Lease-enabled descendant used by plugmlr |
+| plugmlr main b8cd65d | monome dependency pinned to 18b4893; mlr-grid uses lease-enabled live slot |
+| bitwig-arc main ad2bedf | Legacy monome-object auto-connect; no lease/release safety net |
+| grid-studies-pd-vanilla master 7fd872a | Legacy serialosc abstraction; disconnect is not remote release |
+
+The common client is monome_session.lua plus monome-session-core.pd_lua and monome-session.pd. Live grid/Arc slots opt into protocol lease, with scheduler-based 2000 ms renewal. plugmlr callbacks are 17879/17880, distinct from Grid workbench 17779/17780/17781 and Arc 17778/17782; command ports 17900/17901 are workbench controls, not lease discovery. All lease traffic addresses the selected device port. A later Bitwig Arc migration must replace the legacy connection abstraction explicitly; merely installing the lease server does not upgrade existing patches.
+
+The Mac accepted legacy/null-port-safe service and Mac lease candidate are separate installation roots/LaunchAgent labels. Preserve this stable/candidate separation in Lapis lifecycle design rather than using a Mac installer.
