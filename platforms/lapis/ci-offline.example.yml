@@ -1,0 +1,34 @@
+name: Lapis offline integration checks
+
+on:
+  push:
+    branches: [feature/lapis-integration]
+  pull_request:
+    paths:
+      - 'platforms/lapis/**'
+      - 'src/serialosc-device/lease.c'
+      - 'include/serialosc/lease.h'
+      - 'tests/lease_test.c'
+      - '.github/workflows/lapis-offline.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          persist-credentials: false
+      - name: Configure offline target only
+        run: cmake -S platforms/lapis -B build-lapis-offline -DCMAKE_BUILD_TYPE=Debug
+      - name: Build pure lease test
+        run: cmake --build build-lapis-offline --parallel 2
+      - name: Test without USB or OSC access
+        run: ctest --test-dir build-lapis-offline --output-on-failure
