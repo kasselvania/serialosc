@@ -32,6 +32,9 @@ def build(ctx):
 
 	obj('server.c')
 	obj('config.c')
+	obj('config_persistence.c')
+	obj('event_delivery.c')
+	obj('surface.c')
 	obj('lease.c')
 	obj('lease_runtime.c')
 

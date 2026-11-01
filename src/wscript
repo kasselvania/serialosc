@@ -13,16 +13,19 @@ def build_common(ctx):
 
 		if ctx.env.DEST_OS == 'linux':
 			obj('common/platform/linux.c')
+			obj('common/lapis_usb_policy.c')
+			obj('common/lapis_usb_linux.c')
 		elif ctx.env.DEST_OS == 'darwin':
 			obj('common/platform/darwin.c')
 
 	obj('common/ipc.c')
 	obj('common/util.c')
+	obj('common/network.c')
 
 	ctx.stlib(
 		source=objs,
 		target='serialosc-common',
-		use='serialosc-include')
+		use='serialosc-include LO LIBMONOME')
 
 def build(ctx):
 	ctx(export_includes=['..', '../include', '../third-party'],

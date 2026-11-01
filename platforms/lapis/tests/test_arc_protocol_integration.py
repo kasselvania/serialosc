@@ -154,7 +154,7 @@ class ProductionProtocolTests(unittest.TestCase):
                 self.assertEqual(fixture.status()["levels"], [5, 0])
                 state = bench.expiry_test()
                 self.assertEqual((state.mode, state.port, state.owner), ("free", 0, 0))
-                self.assertTrue(any("lost_observed=True" in line for line in log))
+                self.assertTrue(any(line.startswith("EXPIRY_NOTIFICATION_AND_FREE") and "lost_observed=True" in line for line in log))
                 status = fixture.status()
                 self.assertEqual(status["levels"], [0, 0])
                 self.assertEqual(status["calls"], 5)
