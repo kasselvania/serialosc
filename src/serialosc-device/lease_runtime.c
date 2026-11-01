@@ -361,6 +361,15 @@ sosc_runtime_displace_lease_for_legacy(sosc_state_t *state)
 		return 1;
 	}
 
+	/* Allocation may have consumed the remaining TTL. Do not promote expired
+	 * leased components into saved legacy restart authority. */
+	sosc_runtime_expire_lease_if_due(state);
+	if (!state->lease.active) {
+		s_free(host);
+		s_free(prefix);
+		return 0;
+	}
+
 	send_lost(state, "legacy_write");
 	s_free(state->config.app.host);
 	s_free(state->config.app.osc_prefix);

@@ -145,7 +145,7 @@ add_mocked_lease_test(lapis-lease-deadline lease_deadline_test.c
     "${SOSC_ROOT}/src/serialosc-device/event_delivery.c"
     "${SOSC_ROOT}/src/serialosc-device/osc/sys_methods.c"
     "${SOSC_ROOT}/src/serialosc-device/osc/util.c")
-target_link_options(lapis-lease-deadline PRIVATE -Wl,--wrap=sosc_monotonic_ms)
+target_link_options(lapis-lease-deadline PRIVATE -Wl,--wrap=sosc_monotonic_ms -Wl,--wrap=lo_address_new -Wl,--wrap=s_strdup)
 
 add_executable(lapis-strict-osc-surface "${SOSC_ROOT}/tests/strict_osc_surface_test.c"
     "${SOSC_ROOT}/src/serialosc-device/osc/mext_methods.c"

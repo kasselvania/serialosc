@@ -15,6 +15,7 @@
  */
 
 #include <stdio.h>
+#include <string.h>
 #include <stdlib.h>
 
 #include <lo/lo.h>
@@ -234,6 +235,16 @@ OSC_HANDLER_FUNC(sys_port_handler)
 		return 1;
 	}
 
+	/* Displacement can expire during allocation. Prepare again from the now
+	 * stable legacy/free components, not the pre-displacement leased host. */
+	host = lo_address_get_hostname(state->outgoing);
+	if (!host || strcmp(lo_address_get_hostname(new), host)) {
+		lo_address_free(new);
+		new = host ? lo_address_new(host, port) : NULL;
+		if (!new)
+			return 1;
+	}
+
 	old = state->outgoing;
 	state->outgoing = new;
 	state->destination_port = new_port;
@@ -274,6 +285,17 @@ OSC_HANDLER_FUNC(sys_host_handler)
 		lo_address_free(new);
 		s_free(config_host);
 		return 1;
+	}
+
+	/* Match the callback port to the same post-displacement transition. */
+	portstr(port, state->destination_port);
+	if (strcmp(lo_address_get_port(new), port)) {
+		lo_address_free(new);
+		new = lo_address_new(requested_host, port);
+		if (!new) {
+			s_free(config_host);
+			return 1;
+		}
 	}
 
 	old = state->outgoing;

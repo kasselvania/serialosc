@@ -23,6 +23,22 @@ struct monome {
 };
 
 static uint64_t now_ms;
+static uint64_t allocation_deadline;
+static int cross_address, cross_strdup;
+lo_address __real_lo_address_new(const char *, const char *);
+void *__real_s_strdup(const char *);
+lo_address __wrap_lo_address_new(const char *host, const char *port)
+{
+	lo_address result = __real_lo_address_new(host, port);
+	if (cross_address) { now_ms = allocation_deadline; cross_address = 0; }
+	return result;
+}
+void *__wrap_s_strdup(const char *text)
+{
+	void *result = __real_s_strdup(text);
+	if (cross_strdup && --cross_strdup == 0) now_ms = allocation_deadline;
+	return result;
+}
 static int event_messages;
 static int lost_messages;
 static int status_messages;
@@ -260,6 +276,44 @@ test_setter_deadlines(void)
 }
 
 static void
+test_allocation_crossing(void)
+{
+	int host_setter, boundary;
+	for (host_setter = 0; host_setter <= 1; host_setter++)
+		for (boundary = 0; boundary < 3; boundary++) {
+			monome_t monome;
+			sosc_state_t state;
+			lo_message message = lo_message_new();
+			state_init(&state, &monome);
+			acquire(&state, "127.0.0.2", 19001);
+			allocation_deadline = state.lease.deadline_ms;
+			now_ms = allocation_deadline - 1;
+			TEST_CHECK(message);
+			if (host_setter) TEST_CHECK(!lo_message_add_string(message, "127.0.0.3"));
+			else TEST_CHECK(!lo_message_add_int32(message, 19002));
+			cross_address = boundary == 0;
+			/* Host setter duplicates requested host before displacement. */
+			cross_strdup = boundary ? boundary + host_setter : 0;
+			dispatch(&state, host_setter ? "/sys/host" : "/sys/port", message);
+			TEST_CHECK(!cross_address && !cross_strdup);
+			TEST_CHECK(!state.lease.active && monome.clears == 2);
+			TEST_CHECK(!strcmp(state.osc_prefix, "/saved"));
+			TEST_CHECK(!strcmp(state.config.app.osc_prefix, "/saved"));
+			if (host_setter) {
+				TEST_CHECK(state.destination_port == 0 && !state.config.app.port[0]);
+				TEST_CHECK(!strcmp(lo_address_get_port(state.outgoing), "0"));
+				TEST_CHECK(!strcmp(state.config.app.host, "127.0.0.3"));
+			} else {
+				TEST_CHECK(state.destination_port == 19002);
+				TEST_CHECK(!strcmp(lo_address_get_port(state.outgoing), "19002"));
+				TEST_CHECK(!strcmp(state.config.app.host, "127.0.0.1"));
+			}
+			TEST_CHECK(!strcmp(lo_address_get_hostname(state.outgoing), state.config.app.host));
+			state_cleanup(&state);
+		}
+}
+
+static void
 test_status_deadlines(void)
 {
 	int status;
@@ -361,6 +415,7 @@ int main(void)
 {
 	test_event_deadlines();
 	test_setter_deadlines();
+	test_allocation_crossing();
 	test_status_deadlines();
 	test_rotation_deadlines();
 	test_strict_shutdown();

@@ -86,3 +86,14 @@ in build-lapis-candidate; Git contains source/tests only.
 The first integration audit identified genuine output-dispatch/deadline gaps;
 they were fixed and received targeted tests, not hidden by passing old suites.
 Keep this software receipt separate from ACCEPTANCE-GATES.md physical results.
+
+## Allocation-boundary deadline follow-up
+
+Final review found that initial normalization alone did not cover TTL crossing
+during address/string allocation. Legacy displacement now rechecks after its
+preparation, discards captured leased components on expiry, and setters rebuild
+from the post-displacement host/port when needed. Linker-wrapped allocation
+regressions cross exactly at address creation and each displacement string copy
+for both setters. Strict Debug/Release18 and default-policy Release14 suites
+passed again; inactive full candidate build/root6 passed. This corrects a real
+software race; it changes no physical acceptance claim.
