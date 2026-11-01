@@ -16,13 +16,13 @@ Definitive electrical evidence, if the power hypothesis must be proven/disproven
 
 | Gate | Required evidence | Present status |
 | --- | --- | --- |
-| Release assertions stay active | Optimized NDEBUG build runs checks, deliberate bad check exits nonzero, suites execute | Software work only; record exact run receipts |
+| Release assertions stay active | Optimized NDEBUG build runs checks, deliberate bad check exits nonzero, suites execute | PASS software: always-on checks and deliberate negative verifier in Debug/Release |
 | Client lease lifecycle | Acquire/renew/wrong-token/expiry/release/readback with typed protocol tests | Mock/loopback evidence only until actual client/device/host run |
-| Abrupt worker persistence | Real config-file test, crash between grant and shutdown, restart from same state, no stale callback; durable error failure path | OPEN; source gap found, no hardware substitution |
-| Arc capability boundary | Verified ring-count policy and negative unknown-device behavior, then actual target output test | OPEN; current four-index fallback is not a proof |
-| Narrow device selection | No open for unallowlisted target; identity/reconnect race and unknown serial tests; actual open trace later | OPEN; design only |
-| Bounded init and line behavior | Fault-injected silent/partial/error transport with deadline and exact calls; physical compatibility later | OPEN; design only |
-| Network boundary | Actual listener ownership/binds and negative remote-reachability tests for supervisor and workers | OPEN; passive/offline target cannot establish it |
+| Abrupt worker persistence | Real config-file test, crash between grant and shutdown, restart from same state, no stale callback; durable error failure path | PASS software: real temp-file atomic replacement/fault injection/SIGKILL reload tests; no power-loss proof |
+| Arc capability boundary | Verified ring-count policy and negative unknown-device behavior, then actual target output test | PASS strict software: explicit per-serial Arc2/4/grid/unknown tests; physical profile accuracy pending |
+| Narrow device selection | No open for unallowlisted target; identity/reconnect race and unknown serial tests; actual open trace later | PASS software: pure selector + synthetic sysfs preopen revalidation; atomic fd identity not guaranteed |
+| Bounded init and line behavior | Fault-injected silent/partial/error transport with deadline and exact calls; physical compatibility later | PASS userspace software: fake mext/read/write/poll/termios; kernel stalls and physical lines pending |
+| Network boundary | Actual listener ownership/binds and negative remote-reachability tests for supervisor and workers | PASS library software: actual exact local socket/negative network test; real daemon host lifecycle pending |
 | Clean boot on Lapis | Timestamped physical video/observation plus attach logs with no application/probe interaction beyond documented host behavior | FAILED/UNRESOLVED: absent normal animation and abnormal LEDs observed |
 | Lapis physical input/output | Exact serial/port, normal boot, known pattern per ring, encoder events, independent readback | NOT RUN for candidate |
 | Hardware lease cleanup | Physical light persists immediately after client kill, then darkens at expiry, free state; orderly release separately | NOT RUN on Lapis |

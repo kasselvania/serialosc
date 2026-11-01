@@ -29,10 +29,12 @@
 
 #include <serialosc/serialosc.h>
 #include <serialosc/ipc.h>
+#include <serialosc/lapis_usb_policy.h>
 
 typedef struct {
 	struct udev *u;
 	struct udev_monitor *um;
+	sosc_lapis_usb_policy_t policy;
 } detector_state_t;
 
 
@@ -58,7 +60,9 @@ has_usb_serial_parent(struct udev_device *ud)
 
 static char
 test_cdc_driver(struct udev_device *ud) { 
-	const char *p = udev_device_get_driver(ud);
+	const char *p;
+	if (!ud) return 0;
+	p = udev_device_get_driver(ud);
 	if (!p) return 0;
 	char *drv = strdup(p);
 	char is_cdc = strncmp(drv, "cdc", 3) == 0;
@@ -127,7 +131,21 @@ has_usb_cdc_parent(struct udev_device *ud) {
 }
 
 static int
-is_device_compatible(struct udev_device *ud) {
+is_device_compatible(detector_state_t *state, struct udev_device *ud) {
+	struct udev_device *usb, *interface;
+	if (!ud) return 0;
+	if (state->policy.mode == SOSC_LAPIS_USB_STRICT) {
+		/* Only metadata from actual tty ancestry, never generic FTDI alone. */
+		usb = udev_device_get_parent_with_subsystem_devtype(ud, "usb", "usb_device");
+		interface = udev_device_get_parent_with_subsystem_devtype(ud, "usb", "usb_interface");
+		if (!usb || !interface) return 0;
+		return sosc_lapis_usb_matches(&state->policy,
+			udev_device_get_sysattr_value(usb, "idVendor"),
+			udev_device_get_sysattr_value(usb, "idProduct"),
+			udev_device_get_sysattr_value(usb, "serial"),
+			udev_device_get_sysattr_value(interface, "bInterfaceNumber"));
+	}
+	if (state->policy.mode != SOSC_LAPIS_USB_LEGACY) return 0;
 	if (has_usb_serial_parent(ud)) { 
 		return 1;
 	} 
@@ -168,7 +186,10 @@ monitor_attach(detector_state_t *state)
 
 		/* check if this was an add event.
 		   "add"[0] == 'a' */
-		if (*(udev_device_get_action(ud)) == 'a' && is_device_compatible(ud))
+		if (!ud) continue;
+		if (udev_device_get_action(ud) &&
+		    !strcmp(udev_device_get_action(ud), "add") &&
+		    is_device_compatible(state, ud) && udev_device_get_devnode(ud))
 			send_connect(udev_device_get_devnode(ud));
 
 		udev_device_unref(ud);
@@ -191,15 +212,16 @@ scan_connected_devices(detector_state_t *state)
 	udev_enumerate_scan_devices(ue);
 	cursor = udev_enumerate_get_list_entry(ue);
 
-	do {
+	while (cursor) {
 		ud = udev_device_new_from_syspath(
 			state->u, udev_list_entry_get_name(cursor));
 
-		if (is_device_compatible(ud) && (devnode = udev_device_get_devnode(ud)))
+		if (is_device_compatible(state, ud) && (devnode = udev_device_get_devnode(ud)))
 			send_connect(devnode);
 
 		udev_device_unref(ud);
-	} while ((cursor = udev_list_entry_get_next(cursor)));
+		cursor = udev_list_entry_get_next(cursor);
+	}
 
 	udev_enumerate_unref(ue);
 	return 0;
@@ -208,9 +230,21 @@ scan_connected_devices(detector_state_t *state)
 int
 main(int argc, char **argv)
 {
-	detector_state_t state;
+	detector_state_t state = {0};
 
+	if (sosc_lapis_usb_policy_from_env(&state.policy) < 0) {
+		fprintf(stderr, "serialosc: invalid Lapis USB identity policy; refusing detection\n");
+		return 4;
+	}
+#if defined(SOSC_LAPIS_STRICT) || defined(LAPIS_SERIALOSC_REQUIRE_STRICT)
+	/* Private Lapis builds must not become broad scanners if env is lost. */
+	if (state.policy.mode != SOSC_LAPIS_USB_STRICT) {
+		fprintf(stderr, "serialosc: strict Lapis USB identity required; refusing detection\n");
+		return 4;
+	}
+#endif
 	state.u = udev_new();
+	if (!state.u) return 1;
 
 	if (scan_connected_devices(&state))
 		return 1;

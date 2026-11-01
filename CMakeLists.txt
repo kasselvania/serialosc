@@ -11,6 +11,22 @@ set(CMAKE_C_STANDARD 17)
 
 include(CTest)
 
+option(SOSC_LAPIS_STRICT "Build unactivated fail-closed Lapis candidate" OFF)
+set(SOSC_LIBLO_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/third-party/liblo")
+set(SOSC_MONOME_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/third-party/libmonome")
+if(SOSC_LAPIS_STRICT)
+    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        message(FATAL_ERROR "Strict Lapis candidate currently supports Linux only")
+    endif()
+    add_compile_definitions(SOSC_LAPIS_STRICT SOSC_LAPIS_LOOPBACK_ONLY)
+    include(platforms/lapis/cmake/PrivateDependencies.cmake)
+    lapis_patched_dependency(liblo "${SOSC_LIBLO_SOURCE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/platforms/lapis/patches/liblo-explicit-unicast-bind.patch" SOSC_LIBLO_SOURCE)
+    lapis_patched_dependency(libmonome "${SOSC_MONOME_SOURCE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/platforms/lapis/patches/libmonome-bounded-mext.patch" SOSC_MONOME_SOURCE)
+    add_compile_definitions(LAPIS_SERIALOSC_BOUNDED_MEXT)
+endif()
+
 message(STATUS "configuring libuv")
 
 add_subdirectory(third-party/libuv EXCLUDE_FROM_ALL)
@@ -21,7 +37,7 @@ add_subdirectory(third-party/confuse EXCLUDE_FROM_ALL)
 
 message(STATUS "configuring libmonome")
 
-add_subdirectory(third-party/libmonome EXCLUDE_FROM_ALL)
+add_subdirectory("${SOSC_MONOME_SOURCE}" third-party/libmonome EXCLUDE_FROM_ALL)
 
 message(STATUS "configuring liblo")
 
@@ -33,12 +49,12 @@ set(WITH_TESTS OFF)
 set(WITH_CPP_TESTS OFF)
 set(WITH_TOOLS OFF)
 set(WITH_EXAMPLES OFF)
-add_subdirectory(third-party/liblo/cmake EXCLUDE_FROM_ALL)
+add_subdirectory("${SOSC_LIBLO_SOURCE}/cmake" third-party/liblo/cmake EXCLUDE_FROM_ALL)
 
 message(STATUS "configuring serialosc")
 
 include_directories(include)
-include_directories(third-party/liblo)
+include_directories("${SOSC_LIBLO_SOURCE}")
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/third-party/liblo/cmake)
 
 message(STATUS "checking git commit id")
@@ -73,7 +89,9 @@ endif()
 
 add_library(serialosc_common OBJECT
     src/common/ipc.c
-    src/common/util.c)
+    src/common/util.c
+    src/common/network.c
+    src/serialosc-device/surface.c)
 
 if(LINUX)
     target_sources(serialosc_common PRIVATE src/common/platform/posix.c)
@@ -89,7 +107,7 @@ if(WIN32)
     target_sources(serialosc_common PRIVATE src/common/platform/windows.c)
 endif()
 
-target_link_libraries(serialosc_common monome_static)
+target_link_libraries(serialosc_common monome_static liblo_static)
 
 # serialosc-detector
 
@@ -101,7 +119,9 @@ if(LINUX)
     pkg_check_modules(libudev REQUIRED IMPORTED_TARGET libudev)
 
     target_sources(serialosc-detector PRIVATE src/serialosc-detector/libudev.c)
+    target_sources(serialosc_common PRIVATE src/common/lapis_usb_policy.c src/common/lapis_usb_linux.c)
     target_link_libraries(serialosc-detector PkgConfig::libudev)
+    target_link_libraries(serialosc_common PkgConfig::libudev)
 endif()
 
 if(APPLE)
@@ -155,11 +175,16 @@ else()
 endif()
 
 cmake_dependent_option(build_with_zeroconf "enable zeroconf support" ON HAVE_DNS_SD OFF)
+if(SOSC_LAPIS_STRICT)
+    set(build_with_zeroconf OFF)
+endif()
 
 add_executable(serialosc-device)
 set_target_properties(serialosc-device PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 target_sources(serialosc-device PRIVATE src/serialosc-device/config.c)
+target_sources(serialosc-device PRIVATE src/serialosc-device/config_persistence.c)
+target_sources(serialosc-device PRIVATE src/serialosc-device/event_delivery.c)
 target_sources(serialosc-device PRIVATE src/serialosc-device/lease.c)
 target_sources(serialosc-device PRIVATE src/serialosc-device/lease_runtime.c)
 target_sources(serialosc-device PRIVATE src/serialosc-device/server.c)
@@ -201,6 +226,9 @@ endif()
 
 target_include_directories(serialosc-device PRIVATE ${CMAKE_SOURCE_DIR}/third-party)
 target_link_libraries(serialosc-device serialosc_common confuse monome_static liblo_static uv_a)
+if(LINUX)
+    target_link_libraries(serialosc-device PkgConfig::libudev)
+endif()
 
 # serialoscd
 
@@ -301,3 +329,14 @@ message(STATUS "configuration summary:
     prefix:     ${CMAKE_INSTALL_PREFIX}
     zeroconf:   ${build_with_zeroconf}
 ")
+
+if(SOSC_LAPIS_STRICT)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    execute_process(COMMAND git rev-parse HEAD WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        OUTPUT_VARIABLE LAPIS_SOURCE_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+    add_custom_target(lapis-candidate-manifest ALL
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/platforms/lapis/write_candidate_manifest.py"
+            --bin-dir "${CMAKE_BINARY_DIR}/bin" --source-commit "${LAPIS_SOURCE_COMMIT}"
+        DEPENDS serialoscd serialosc-device serialosc-detector
+        COMMENT "Write inert strict-candidate hashes; no daemon is started")
+endif()

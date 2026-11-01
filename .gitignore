@@ -9,3 +9,6 @@ build/
 # temporary stuff
 *.swp
 *~
+
+# Inert local Lapis candidate build/state (never source artifacts)
+build-lapis-candidate/

@@ -15,9 +15,11 @@
  */
 
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <libgen.h>
 #include <stdio.h>
+#include <signal.h>
 
 #include <uv.h>
 #include <wwrl/vector_stdlib.h>
@@ -28,6 +30,11 @@
 #include <serialosc/serialosc.h>
 #include <serialosc/ipc.h>
 #include <serialosc/osc.h>
+#include <serialosc/network.h>
+#ifdef SOSC_LAPIS_STRICT
+#include <serialosc/lapis_usb_policy.h>
+#include <serialosc/surface.h>
+#endif
 
 #define SELF_FROM(p, member) struct sosc_supervisor *self = container_of(p,	\
 		struct sosc_supervisor, member)
@@ -85,6 +92,12 @@ struct sosc_supervisor {
 		notifications;
 
 	uv_check_t drain_notifications;
+#ifdef SOSC_LAPIS_STRICT
+	/* Monotonic terminal state: no enable or late detector message may
+	 * resurrect children after a signal requests orderly shutdown. */
+	int shutting_down;
+	uv_signal_t sigint, sigterm;
+#endif
 };
 
 struct sosc_device_subprocess {
@@ -193,6 +206,9 @@ dispatch_ipc_msgs(uv_stream_t *stream, ssize_t nbytes, const uv_buf_t *buf,
 
 static void detector_exit_cb(uv_process_t *, int64_t, int);
 static void detector_read_cb(uv_stream_t *, ssize_t, const uv_buf_t *);
+#ifdef SOSC_LAPIS_STRICT
+static void supervisor_finish_shutdown(struct sosc_supervisor *);
+#endif
 
 static void
 remaining_subprocesses_walk_cb(uv_handle_t *handle, void *args)
@@ -233,6 +249,10 @@ state_change_check_cb(uv_idle_t *handle)
 done:
 	self->state = self->state_change.pending;
 	uv_idle_stop(handle);
+#ifdef SOSC_LAPIS_STRICT
+	if (self->shutting_down && self->state == SERIALOSC_DISABLED)
+		supervisor_finish_shutdown(self);
+#endif
 }
 
 static void
@@ -245,7 +265,10 @@ static void
 write_ipc_msg_to_stream(uv_stream_t *stream, struct sosc_ipc_msg *msg)
 {
 	uv_buf_t uv_buf;
-	uv_write_t *req;
+	struct {
+		uv_write_t req;
+		uint8_t buf[SOSC_IPC_MSG_BUFFER_SIZE];
+	} *write;
 	uint8_t buf[SOSC_IPC_MSG_BUFFER_SIZE];
 	ssize_t nbytes;
 
@@ -253,9 +276,15 @@ write_ipc_msg_to_stream(uv_stream_t *stream, struct sosc_ipc_msg *msg)
 	if (nbytes < 0)
 		return;
 
-	req = calloc(1, sizeof(*req));
-	uv_buf = uv_buf_init((void *) buf, nbytes);
-	uv_write(req, stream, &uv_buf, 1, ipc_msg_write_cb);
+	if (uv_is_closing((uv_handle_t *) stream) || !uv_is_writable(stream))
+		return;
+	if (!(write = calloc(1, sizeof(*write))))
+		return;
+	/* uv_write can complete asynchronously: retain bytes until callback. */
+	memcpy(write->buf, buf, nbytes);
+	uv_buf = uv_buf_init((void *) write->buf, nbytes);
+	if (uv_write(&write->req, stream, &uv_buf, 1, ipc_msg_write_cb))
+		free(write);
 }
 
 static void
@@ -279,6 +308,21 @@ supervisor__change_state(struct sosc_supervisor *self,
 {
 	char *detector_args[] = {self->detector_exe_path, NULL};
 
+#ifdef SOSC_LAPIS_STRICT
+	if (new_state == SERIALOSC_ENABLED && self->shutting_down)
+		return -1;
+	/* Disable supersedes the pending initial enable; a signal before the
+	 * first idle callback must not silently lose its shutdown request. */
+	if (new_state == SERIALOSC_DISABLED) {
+		if (uv_is_active((void *) &self->state_change.check) &&
+		    self->state_change.pending == SERIALOSC_DISABLED)
+			return -1;
+		if (self->state == SERIALOSC_DISABLED &&
+		    !uv_is_active((void *) &self->state_change.check) &&
+		    !self->shutting_down)
+			return -1;
+	} else
+#endif
 	if (self->state == new_state
 			|| uv_is_active((void *) &self->state_change.check))
 		return -1;
@@ -295,7 +339,12 @@ supervisor__change_state(struct sosc_supervisor *self,
 		break;
 
 	case SERIALOSC_DISABLED:
-		uv_process_kill(&self->detector.proc, SIGTERM);
+#ifdef SOSC_LAPIS_STRICT
+		if (self->detector.proc.data == &detector_type &&
+		    !uv_is_closing((void *) &self->detector.proc) &&
+		    uv_is_active((void *) &self->detector.proc))
+#endif
+			uv_process_kill(&self->detector.proc, SIGTERM);
 		uv_walk(self->loop, kill_devices_walk_cb, NULL);
 		break;
 
@@ -322,6 +371,36 @@ supervisor_disable(struct sosc_supervisor *self)
 {
 	return supervisor__change_state(self, SERIALOSC_DISABLED);
 }
+
+#ifdef SOSC_LAPIS_STRICT
+static void
+supervisor_finish_shutdown(struct sosc_supervisor *self)
+{
+	/* Every child process handle has completed teardown. Close the final
+	 * supervisor handles, letting uv_run drain callbacks and return without
+	 * exit() or uv_stop() cutting off worker protocol cleanup. */
+	uv_poll_stop(&self->osc.poll);
+	uv_check_stop(&self->drain_notifications);
+	uv_signal_stop(&self->sigint);
+	uv_signal_stop(&self->sigterm);
+	uv_close((void *) &self->osc.poll, NULL);
+	uv_close((void *) &self->drain_notifications, NULL);
+	uv_close((void *) &self->state_change.check, NULL);
+	uv_close((void *) &self->sigint, NULL);
+	uv_close((void *) &self->sigterm, NULL);
+}
+
+static void
+supervisor_signal_cb(uv_signal_t *handle, int signum)
+{
+	struct sosc_supervisor *self = handle->data;
+	if (self->shutting_down)
+		return;
+	self->shutting_down = 1;
+	/* Launcher owns the bounded grace period and forced group cleanup. */
+	supervisor_disable(self);
+}
+#endif
 
 /*************************************************************************
  * osc
@@ -448,7 +527,7 @@ osc_poll_cb(uv_poll_t *handle, int status, int events)
 static int
 init_osc_server(struct sosc_supervisor *self)
 {
-	if (!(self->osc.server = lo_server_new(SOSC_SUPERVISOR_OSC_PORT, NULL)))
+	if (!(self->osc.server = sosc_network_server_new(SOSC_SUPERVISOR_OSC_PORT, NULL)))
 		return -1;
 
 	lo_server_add_method(self->osc.server,
@@ -644,6 +723,16 @@ handle_connection(struct sosc_supervisor *self, struct sosc_ipc_msg *msg)
 {
 	struct sosc_device_subprocess *dev;
 
+#ifdef SOSC_LAPIS_STRICT
+	/* Queued detector announcements must not spawn workers that missed the
+	 * should-exit broadcast, including ordinary OSC disable transitions. */
+	if (self->shutting_down ||
+	    (uv_is_active((void *) &self->state_change.check) &&
+	     self->state_change.pending == SERIALOSC_DISABLED) ||
+	    (self->state == SERIALOSC_DISABLED &&
+	     !uv_is_active((void *) &self->state_change.check)))
+		return -1;
+#endif
 	if (!(dev = calloc(1, sizeof(*dev))))
 		goto err_calloc;
 
@@ -794,6 +883,18 @@ main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 
+#ifdef SOSC_LAPIS_STRICT
+	/* Fail before socket bind, child spawn, or default preference creation. */
+	sosc_lapis_usb_policy_t policy;
+	sosc_surface_profile_t surface;
+	if (sosc_lapis_usb_policy_from_env(&policy) ||
+	    policy.mode != SOSC_LAPIS_USB_STRICT || !self.config_dir || !*self.config_dir ||
+	    sosc_surface_parse_profile(&surface, policy.serial, getenv("LAPIS_SERIALOSC_SURFACES"))) {
+		fprintf(stderr, "serialosc: explicit strict Lapis identity, surface and config directory required\n");
+		return EXIT_FAILURE;
+	}
+#endif
+
 	setvbuf(stdout, NULL, _IONBF, 0);
 	setvbuf(stderr, NULL, _IONBF, 0);
 
@@ -813,21 +914,34 @@ main(int argc, char **argv)
 	if (init_osc_server(&self))
 		goto err_osc_server;
 
+	uv_check_init(self.loop, &self.drain_notifications);
+#ifdef SOSC_LAPIS_STRICT
+	uv_signal_init(self.loop, &self.sigint);
+	uv_signal_init(self.loop, &self.sigterm);
+	self.sigint.data = self.sigterm.data = &self;
+	if (uv_signal_start(&self.sigint, supervisor_signal_cb, SIGINT) ||
+	    uv_signal_start(&self.sigterm, supervisor_signal_cb, SIGTERM))
+		goto err_enable;
+#endif
 	if (supervisor_enable(&self))
 		goto err_enable;
 
 	uv_poll_start(&self.osc.poll, UV_READABLE, osc_poll_cb);
-	uv_check_init(self.loop, &self.drain_notifications);
 
 	uv_run(self.loop, UV_RUN_DEFAULT);
 
+#ifndef SOSC_LAPIS_STRICT
 	uv_close((void *) &self.drain_notifications, NULL);
 	uv_close((void *) &self.state_change.check, NULL);
+#endif
 
 	/* run once more to make sure libuv cleans up any internal resources. */
 	uv_run(self.loop, UV_RUN_NOWAIT);
 
 	VECTOR_FREE(&self.notifications);
+#ifdef SOSC_LAPIS_STRICT
+	lo_server_free(self.osc.server);
+#endif
 	uv_loop_close(self.loop);
 
 	free_paths(&self);

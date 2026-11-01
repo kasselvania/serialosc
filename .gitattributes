@@ -1,2 +1,2 @@
-.gitignore export-ignore
-.gitattributes export-ignore
+# Unified diff context deliberately preserves upstream indentation/blank lines.
+platforms/lapis/patches/*.patch -whitespace

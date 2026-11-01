@@ -63,6 +63,13 @@ typedef struct sosc_state {
 	int destination_port;
 	sosc_lease_t lease;
 
+	/* Borrowed for the synchronous worker lifetime. NULL selects platform
+	 * defaults in production only; runtime never implicitly opens prefs. */
+	const char *config_dir;
+	/* Zero only after saved callback port is durably cleared. NULL fails
+	 * closed for new leases; tests must supply an explicit stub. */
+	int (*persist_free)(struct sosc_state *state);
+
 	int ipc_in_fd;
 	int ipc_out_fd;
 
@@ -75,14 +82,20 @@ typedef struct sosc_state {
 #endif
 
 	sosc_config_t config;
+
+	/* Opt-in strict surface policy; zero initialization preserves legacy. */
+	int strict_surface;
+	int surface;
+	int ring_count;
 } sosc_state_t;
 
 int  sosc_event_loop(struct sosc_state *state);
-void sosc_server_run(const char *config_dir, monome_t *monome);
+int sosc_server_run(const char *config_dir, monome_t *monome);
 
 int sosc_config_create_directory();
 int sosc_config_read(const char *config_dir, const char *serial, sosc_config_t *config);
 int sosc_config_write(const char *config_dir, const char *serial, sosc_state_t *state);
+int sosc_config_persist_free(sosc_state_t *state);
 
 void sosc_port_itos(char *dest, long int port);
 size_t sosc_strlcpy(char *dst, const char *src, size_t size);

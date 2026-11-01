@@ -34,6 +34,8 @@ typedef enum {
 
 int sosc_runtime_init(struct sosc_state *state);
 void sosc_runtime_cleanup(struct sosc_state *state);
+/* Strict worker orderly stop only; legacy/non-strict shutdown is unchanged. */
+int sosc_runtime_shutdown(struct sosc_state *state);
 
 const char *sosc_runtime_mode(const struct sosc_state *state);
 int sosc_runtime_dark_surface(struct sosc_state *state);

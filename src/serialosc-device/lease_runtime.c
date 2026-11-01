@@ -27,8 +27,7 @@
 #include <serialosc/osc.h>
 #include <serialosc/platform.h>
 #include <serialosc/serialosc.h>
-
-#define SOSC_ARC_MAX_RINGS 4
+#include <serialosc/surface.h>
 
 static void
 port_string(char port[6], int value)
@@ -167,6 +166,26 @@ sosc_runtime_cleanup(sosc_state_t *state)
 	sosc_lease_clear(&state->lease);
 }
 
+int
+sosc_runtime_shutdown(sosc_state_t *state)
+{
+	char saved_port[sizeof(state->config.app.port)];
+	int dark_result;
+	int restore_result;
+
+	if (!state || !state->strict_surface)
+		return 0;
+
+	/* Runtime authority is relinquished even if physical darkening fails.
+	 * Saved legacy restart policy is deliberately not changed by stopping. */
+	memcpy(saved_port, state->config.app.port, sizeof(saved_port));
+	dark_result = sosc_runtime_dark_surface(state);
+	sosc_lease_clear(&state->lease);
+	restore_result = restore_free_destination(state);
+	memcpy(state->config.app.port, saved_port, sizeof(saved_port));
+	return dark_result || restore_result;
+}
+
 const char *
 sosc_runtime_mode(const sosc_state_t *state)
 {
@@ -178,20 +197,14 @@ sosc_runtime_mode(const sosc_state_t *state)
 int
 sosc_runtime_dark_surface(sosc_state_t *state)
 {
-	int ring;
-	int result = 0;
+	sosc_surface_profile_t profile;
 
-	/* libmonome's series/40h protocols return zero after a successful write,
-	 * while mext/OSC return a positive byte count. Only a negative result is
-	 * a device-write failure. */
-	if (monome_get_cols(state->monome) > 0 &&
-			monome_get_rows(state->monome) > 0)
-		return monome_led_all(state->monome, 0) < 0;
-
-	for (ring = 0; ring < SOSC_ARC_MAX_RINGS; ring++)
-		if (monome_led_ring_all(state->monome, ring, 0) < 0)
-			result = 1;
-	return result;
+	if (!state)
+		return 1;
+	profile.strict_surface = state->strict_surface;
+	profile.surface = state->surface;
+	profile.ring_count = state->ring_count;
+	return sosc_surface_dark(state->monome, &profile);
 }
 
 int
@@ -266,6 +279,18 @@ sosc_runtime_lease_acquire(sosc_state_t *state, const char *token,
 		return SOSC_LEASE_RESULT_DEVICE_ERROR;
 	}
 
+	/* Hardware may now be dark, but retain old runtime/config authority unless
+	 * the free callback is confirmed durable. A failed post-rename commit
+	 * may safely leave disk free; do not roll that safe side effect back. */
+	if (!state->persist_free || state->persist_free(state)) {
+		lo_address_free(destination);
+		s_free(new_prefix);
+		return SOSC_LEASE_RESULT_INTERNAL_ERROR;
+	}
+
+	/* Slow storage must not consume TTL; resources/token were prepared
+	 * before the durable boundary and this renewal cannot allocate. */
+	sosc_lease_renew(&new_lease, token, ttl_ms, sosc_monotonic_ms());
 	/* A leased callback is never restart authority. */
 	state->config.app.port[0] = '\0';
 	replace_runtime_destination(state, destination, new_prefix, port);

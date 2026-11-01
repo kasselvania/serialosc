@@ -29,6 +29,7 @@
 #include <serialosc/lease_runtime.h>
 #include <serialosc/platform.h>
 #include <serialosc/serialosc.h>
+#include "mock_persistence.h"
 
 struct monome {
 	int fd;
@@ -103,7 +104,7 @@ main(void)
 {
 	int pipe_fds[2];
 	monome_t monome = {0};
-	sosc_state_t state = {0};
+	sosc_state_t state = {.persist_free = mock_persist_free};
 	waker_t waker;
 	pthread_t thread;
 	uint64_t started;

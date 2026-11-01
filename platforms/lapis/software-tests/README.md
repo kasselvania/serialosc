@@ -1,19 +1,46 @@
-# Software protocol test harness — NO hardware acceptance
+# Hardware-free implementation checks
 
-This isolated CMake project links the bundled liblo and production lease/runtime/event-loop code with test-owned monome functions. It does NOT link libmonome serial platform code or build/run a USB detector or daemon. Event-loop device input uses pipes, darkening uses counters. OSC tests bind ephemeral loopback sockets; this is active software protocol testing, not a purely passive check.
+This separate project builds production lease/config/runtime/sys/lease OSC code
+with test-owned monome callbacks, never libmonome serial platform code or a USB
+detector/daemon entrypoint. Config tests use private temporary directories;
+the default-preference resolver is deliberately trapped. Event-loop input is a
+pipe. OSC/client tests use ephemeral local sockets, never discovery UDP12002.
 
-From repository root, repeat for Debug and Release:
+    cmake -S platforms/lapis/software-tests -B /tmp/lapis-tests-release -DCMAKE_BUILD_TYPE=Release
+    cmake --build /tmp/lapis-tests-release --parallel 2
+    ctest --test-dir /tmp/lapis-tests-release --output-on-failure
 
-    cmake -S platforms/lapis/software-tests -B /tmp/lapis-tests-Debug -DCMAKE_BUILD_TYPE=Debug
-    cmake --build /tmp/lapis-tests-Debug --parallel 2
-    ctest --test-dir /tmp/lapis-tests-Debug --output-on-failure
+Repeat with Debug and with -DSOSC_LAPIS_STRICT=OFF. Strict is ON by default in
+this test-only project, OFF by default in the actual top-level daemon project.
+Strict tests patch clean private dependency copies; no source submodule edits.
 
-    cmake -S platforms/lapis/software-tests -B /tmp/lapis-tests-Release -DCMAKE_BUILD_TYPE=Release
-    cmake --build /tmp/lapis-tests-Release --parallel 2
-    ctest --test-dir /tmp/lapis-tests-Release --output-on-failure
+Requires populated liblo/libmonome headers/source submodules, CMake 3.27+, C17
+compiler, pthreads, patch, Python3.11+; no libudev development files, root, tty
+permission, PlugData or physical device. Python launcher tests run only dummy
+processes in their own groups and temporary checkout. They intentionally test
+signals including scoped forced termination, not actual USB shutdown.
 
-Requires populated liblo/libmonome source submodules for headers and liblo source, C17 compiler, pthreads, CMake 3.27+. Does not require libudev development files, serial node access or root. Third-party CMake may emit deprecation warnings. The suite has a failing-check wrapper: it passes only if its child deliberately exits nonzero with the expected diagnostic. A negative self-test passing means assertion enforcement worked, not that a defect was ignored.
+Coverage includes:
+- Debug/Release checks plus deliberate false-check verifier.
+- Lease core/runtime and real loopback OSC; poll and select timer expiry.
+- Explicit surface family/count and exact cleanup-index boundaries.
+- Real atomic config write, fault injection, pre/post-rename SIGKILL restart,
+  malformed/unreadable config, preserved authority on failed grant.
+- Exact allowlist parsing plus bounded synthetic sysfs ancestor validation.
+- Actual loopback socket binding/local OSC/nonloopback-address rejection.
+- Patched mext/termios/read/write/poll with every hardware syscall replaced.
+- Workbench fake clock/UDP server lifecycle and protocol/source/type failures.
+- Actual production lease/sys/runtime + workbench interoperability fixture
+  with in-memory Arc2 output, temporary real config persistence and real UDP.
+- Launcher exact schema/hash/ownership/default inertness/own-group lifecycle.
+- Generated manifest accepted by actual validator; wrong patch baseline refused.
 
-Passed locally on Debian 13 aarch64 with GCC 14.2 and CMake 3.31.6, Debug and Release (-O3 -DNDEBUG): runtime, loopback OSC, poll expiry, select expiry, check self-test and deliberate-negative-check verifier (six CTest cases per build). Pure lease core also passes as a separate optimized test; passive synthetic filesystem checks are in the parent offline target.
+The fixture is not a real device worker: its ring output is in-memory and it
+cannot validate libmonome ABI/device behavior. SIGKILL is not a power cut;
+fsync tests do not certify storage power-loss durability. Linux default-policy
+coverage is not a native Mac/Windows build or physical compatibility pass.
 
-This receipt DOES NOT establish full daemon build, crash-durable persistence, physical ring-count correctness, startup animation, output voltage/current, encoder I/O, actual PlugData scheduling or safe Lapis USB lifecycle. See ../ACCEPTANCE-GATES.md. No hardware-ready release claim is warranted.
+All physical startup/LED/encoder/reconnect, Lapis host shutdown, PlugData/DAW
+and electrical tests remain separately required. See ../SOFTWARE-EVIDENCE.md
+and ../ACCEPTANCE-GATES.md. Compiling the full daemon is a separate lane and
+never implies permission to execute it.

@@ -1,0 +1,313 @@
+diff -ruN lapis-mext-before/src/platform/linux.c lapis-mext-after/src/platform/linux.c
+--- lapis-mext-before/src/platform/linux.c	2026-11-01 09:40:06.092164856 -0800
++++ lapis-mext-after/src/platform/linux.c	2026-11-01 09:40:06.229165553 -0800
+@@ -15,6 +15,9 @@
+  */
+ 
+ #include <poll.h>
++#ifdef LAPIS_SERIALOSC_BOUNDED_MEXT
++#include <errno.h>
++#endif
+ 
+ #include <monome.h>
+ #include "platform.h"
+@@ -28,6 +31,14 @@
+ 	fds->fd = monome_get_fd(monome);
+ 	fds->events = POLLIN;
+ 
++#ifdef LAPIS_SERIALOSC_BOUNDED_MEXT
++	/* Never interpret poll failure, HUP or invalid fd as readable input. */
++	int status = poll(fds, 1, msec);
++	if (status < 0) return -1;
++	if (!status) return 1;
++	if (fds->revents & (POLLERR | POLLHUP | POLLNVAL)) { errno = EIO; return -1; }
++	return (fds->revents & POLLIN) ? 0 : 1;
++#else
+ 	if( !poll(fds, 1, msec) )
+ 		return 1;
+ 
+@@ -35,4 +46,5 @@
+ 		return -1;
+ 
+ 	return 0;
++#endif
+ }
+diff -ruN lapis-mext-before/src/platform/posix.c lapis-mext-after/src/platform/posix.c
+--- lapis-mext-before/src/platform/posix.c	2026-11-01 09:40:06.092164856 -0800
++++ lapis-mext-after/src/platform/posix.c	2026-11-01 09:50:09.996236362 -0800
+@@ -26,6 +26,9 @@
+ #include <sys/select.h>
+ #include <termios.h>
+ #include <errno.h>
++#ifdef LAPIS_SERIALOSC_BOUNDED_MEXT
++#include <time.h>
++#endif
+ 
+ #include <monome.h>
+ #include "internal.h"
+@@ -104,16 +107,28 @@
+ 		return 1;
+ 	}
+ 
++#ifdef LAPIS_SERIALOSC_BOUNDED_MEXT
++	if (tcgetattr(fd, &ot) < 0) goto err_tcsetattr;
++#else
+ 	tcgetattr(fd, &ot);
++#endif
+ 	nt = ot;
+ 
+ 	/* baud rate */
+ 	if( m->quirks & QUIRK_57600_BAUD ) {
++#ifdef LAPIS_SERIALOSC_BOUNDED_MEXT
++		if (cfsetispeed(&nt, B57600) || cfsetospeed(&nt, B57600)) goto err_tcsetattr;
++#else
+ 		cfsetispeed(&nt, B57600);
+ 		cfsetospeed(&nt, B57600);
++#endif
+ 	} else {
++#ifdef LAPIS_SERIALOSC_BOUNDED_MEXT
++		if (cfsetispeed(&nt, MONOME_BAUD_RATE) || cfsetospeed(&nt, MONOME_BAUD_RATE)) goto err_tcsetattr;
++#else
+ 		cfsetispeed(&nt, MONOME_BAUD_RATE);
+ 		cfsetospeed(&nt, MONOME_BAUD_RATE);
++#endif
+ 	}
+ 
+ 	/* parity (8N1) */
+@@ -127,6 +142,15 @@
+ 	nt.c_iflag &= ~(IGNBRK | BRKINT | ICRNL | INLCR | PARMRK |
+ 	                INPCK | ISTRIP | IXON);
+ 
++#ifdef LAPIS_SERIALOSC_BOUNDED_MEXT
++	/* Explicit software no-flow-control policy; no DTR/RTS ioctl or reset.
++	 * HUPCL is preserved, including driver-dependent open/close effects. */
++	nt.c_iflag &= ~(IXOFF | IXANY);
++#ifdef CRTSCTS
++	nt.c_cflag &= ~CRTSCTS;
++#endif
++#endif
++
+ 	/* raw output */
+ 	nt.c_oflag &= ~(OCRNL | ONLCR | ONLRET | ONOCR |
+ 	                OFILL | OPOST);
+@@ -137,15 +161,25 @@
+ 	if( tcsetattr(fd, TCSANOW, &nt) < 0 )
+ 		goto err_tcsetattr;
+ 
++#ifdef LAPIS_SERIALOSC_BOUNDED_MEXT
++	if (tcflush(fd, TCIOFLUSH) < 0) goto err_tcsetattr;
++#else
+ 	tcflush(fd, TCIOFLUSH);
++#endif
+ 
+ 	monome->fd = fd;
+ 	return 0;
+ 
+ err_tcsetattr:
++#ifdef LAPIS_SERIALOSC_BOUNDED_MEXT
++	{ int saved = errno;
++#endif
+ 	perror("libmonome: could not set terminal attributes");
+ 
+ 	close(fd);
++#ifdef LAPIS_SERIALOSC_BOUNDED_MEXT
++	errno = saved; }
++#endif
+ 	return 1;
+ }
+ 
+@@ -165,7 +199,40 @@
+ 	return ret;
+ }
+ 
++#ifdef LAPIS_SERIALOSC_BOUNDED_MEXT
++static int64_t lapis_read_ms(void) {
++	struct timespec ts;
++	if (clock_gettime(CLOCK_MONOTONIC, &ts)) return -1;
++	return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
++}
++#endif
++
+ ssize_t monome_platform_read(monome_t *monome, uint8_t *buf, size_t nbyte) {
++#ifdef LAPIS_SERIALOSC_BOUNDED_MEXT
++	/* fd is O_NONBLOCK; overall budget includes partial reads/EINTR/EOF. */
++	int64_t start = lapis_read_ms(), now;
++	ssize_t count, total = 0;
++	unsigned int attempts;
++	int status;
++	if (start < 0) return -1;
++	for (attempts = 0; nbyte && attempts < 256; ++attempts) {
++		now = lapis_read_ms();
++		if (now < 0) return -1;
++		if (now - start >= READ_TIMEOUT) break;
++		count = read(monome->fd, buf, nbyte);
++		if (count > 0) { total += count; buf += count; nbyte -= count; continue; }
++		if (!count) break;
++		if (errno == EINTR) continue;
++		if (errno != EAGAIN && errno != EWOULDBLOCK) return -1;
++		now = lapis_read_ms();
++		if (now < 0) return -1;
++		if (now - start >= READ_TIMEOUT) break;
++		status = monome_platform_wait_for_input(monome, READ_TIMEOUT - (now - start));
++		if (status < 0) return -1;
++		if (status > 0) break;
++	}
++	return total;
++#else
+ 	ssize_t bytes, ret = 0;
+ 	int err;
+ 
+@@ -193,6 +260,7 @@
+ 	}
+ 
+ 	return ret;
++#endif
+ }
+ 
+ void monome_event_loop(monome_t *monome) {
+diff -ruN lapis-mext-before/src/proto/mext.c lapis-mext-after/src/proto/mext.c
+--- lapis-mext-before/src/proto/mext.c	2026-11-01 09:40:06.088164835 -0800
++++ lapis-mext-after/src/proto/mext.c	2026-11-01 09:46:51.059224562 -0800
+@@ -15,6 +15,14 @@
+  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+  */
+ 
++#ifdef LAPIS_SERIALOSC_BOUNDED_MEXT
++#ifndef _POSIX_C_SOURCE
++#define _POSIX_C_SOURCE 200809L
++#endif
++#include <time.h>
++#include <errno.h>
++#include <stdio.h>
++#endif
+ #include <stdlib.h>
+ #include <stdint.h>
+ #include <string.h>
+@@ -39,7 +47,17 @@
+ 	payload_length = outgoing_payload_lengths[msg->addr][msg->cmd];
+ 	msg->header = ((msg->addr & 0xF ) << 4) | (msg->cmd & 0xF);
+ 
++	#ifdef LAPIS_SERIALOSC_BOUNDED_MEXT
++	/* A partial nonblocking write is failure; never replay a frame suffix. */
++	ssize_t n = monome_platform_write(monome, &msg->header, 1 + payload_length);
++	if (n != (ssize_t)(1 + payload_length)) {
++		if (n >= 0) errno = EIO;
++		return -1;
++	}
++	return n;
++#else
+ 	return monome_platform_write(monome, &msg->header, 1 + payload_length);
++#endif
+ }
+ 
+ static ssize_t mext_read_msg(monome_t *monome, mext_msg_t *msg) {
+@@ -570,8 +588,15 @@
+ 	SELF_FROM(monome);
+ 	mext_msg_t msg = {0, 0};
+ 	ssize_t status;
++#ifdef LAPIS_SERIALOSC_BOUNDED_MEXT
++	unsigned int messages = 0;
++#endif
+ 
+ 	while ((status = mext_read_msg(monome, &msg)) > 0) {
++#ifdef LAPIS_SERIALOSC_BOUNDED_MEXT
++		/* Preserve event-loop responsiveness under endless system traffic. */
++		if (++messages > 64) return 0;
++#endif
+ 		if (msg.addr == SS_SYSTEM) {
+ 			subsystem_event_handlers[0](self, &msg, e);
+ 			continue;
+@@ -584,10 +609,75 @@
+ 	return status;
+ }
+ 
++#ifdef LAPIS_SERIALOSC_BOUNDED_MEXT
++/* Bounds userspace work, not blocked kernel open/read/write/close calls. */
++#define LAPIS_INIT_MS 3000
++#define LAPIS_INIT_ROUNDS 12
++#define LAPIS_INIT_MESSAGES 64
++static int64_t lapis_mext_ms(void) {
++	struct timespec ts;
++	if (clock_gettime(CLOCK_MONOTONIC, &ts)) return -1;
++	return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
++}
++
++static int lapis_mext_initialize(monome_t *monome) {
++	SELF_FROM(monome);
++	const unsigned int masks[] = {MEXT_NEED_QUERY, MEXT_NEED_ID, MEXT_NEED_GRID_SIZE};
++	const mext_cmd_t commands[] = {CMD_SYSTEM_QUERY, CMD_SYSTEM_GET_ID, CMD_SYSTEM_GET_GRIDSZ};
++	int64_t start = lapis_mext_ms(), now;
++	unsigned int round = 0, i, message;
++	int status, saved;
++	monome_event_t e = {0};
++	mext_msg_t msg;
++	if (start < 0) goto fail;
++	for (round = 0; round < LAPIS_INIT_ROUNDS; ++round) {
++		now = lapis_mext_ms();
++		if (now < 0) goto fail;
++		if (now - start >= LAPIS_INIT_MS) { errno = ETIMEDOUT; goto fail; }
++		for (i = 0; i < ARRAY_LENGTH(masks); ++i)
++			if ((self->need_responses & masks[i]) && mext_simple_cmd(monome, commands[i]) < 0)
++				goto fail;
++		now = lapis_mext_ms();
++		if (now < 0) goto fail;
++		if (now - start >= LAPIS_INIT_MS) { errno = ETIMEDOUT; goto fail; }
++		status = monome_platform_wait_for_input(monome,
++			(LAPIS_INIT_MS - (now - start) < 250) ? (uint_t)(LAPIS_INIT_MS - (now - start)) : 250);
++		if (status < 0) goto fail;
++		if (status > 0) continue;
++		/* mext_next_event can stay inside one call on endless system traffic. */
++		for (message = 0; message < LAPIS_INIT_MESSAGES; ++message) {
++			now = lapis_mext_ms();
++			if (now < 0) goto fail;
++			if (now - start >= LAPIS_INIT_MS) { errno = ETIMEDOUT; goto fail; }
++			memset(&msg, 0, sizeof(msg));
++			status = mext_read_msg(monome, &msg);
++			now = lapis_mext_ms();
++			if (now < 0) goto fail;
++			if (now - start >= LAPIS_INIT_MS) { errno = ETIMEDOUT; goto fail; }
++			if (status < 0) { errno = EIO; goto fail; }
++			if (!status) break;
++			if (msg.addr == SS_SYSTEM) mext_handler_system(self, &msg, &e);
++			if (!self->need_responses) return 0;
++		}
++	}
++	errno = ETIMEDOUT;
++fail:
++	saved = errno;
++	fprintf(stderr, "libmonome: Lapis mext init failed pending=0x%x rounds=%u errno=%d\n",
++		self->need_responses, round, saved);
++	/* Original libmonome init failure does not close an opened transport. */
++	monome_platform_close(monome);
++	errno = saved;
++	return -1;
++}
++#endif
++
+ static int mext_open(monome_t *monome, const char *dev, const char *serial,
+                      const monome_devmap_t *m, va_list args) {
++#ifndef LAPIS_SERIALOSC_BOUNDED_MEXT
+ 	SELF_FROM(monome);
+ 	monome_event_t e;
++#endif
+ 
+ 	if( monome_platform_open(monome, m, dev) )
+ 		return -1;
+@@ -595,6 +685,9 @@
+ 	monome->serial = serial;
+ 	monome->friendly = m->friendly;
+ 
++#ifdef LAPIS_SERIALOSC_BOUNDED_MEXT
++	return lapis_mext_initialize(monome);
++#else
+ #define QUERY_IF_NEEDED(resp, cmd)											\
+ 	do {																	\
+ 		if( self->need_responses & resp )									\
+@@ -614,6 +707,7 @@
+ #undef QUERY_IF_NEEDED
+ 
+ 	return 0;
++#endif
+ }
+ 
+ static int mext_close(monome_t *monome) {

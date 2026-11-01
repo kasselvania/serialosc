@@ -25,6 +25,7 @@
 #include <serialosc/lease_runtime.h>
 #include <serialosc/platform.h>
 #include <serialosc/serialosc.h>
+#include "mock_persistence.h"
 
 struct monome {
 	int cols;
@@ -92,6 +93,7 @@ static void
 state_init(sosc_state_t *state, monome_t *monome, int port)
 {
 	memset(state, 0, sizeof(*state));
+	state->persist_free = mock_persist_free;
 	state->monome = monome;
 	state->config.app.host = s_strdup("127.0.0.1");
 	state->config.app.osc_prefix = s_strdup("/saved");

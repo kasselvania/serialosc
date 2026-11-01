@@ -1,6 +1,6 @@
 # SerialOSC on Lapis: proposed integration contract
 
-Status: design and passive tooling only. NO approved hardware-compatible release exists yet. USB startup fault unresolved. No active service, driver, or installer is shipped in this project.
+Status: implementation candidate with software tests, NOT an approved hardware-compatible release. USB startup fault unresolved. No active service, driver, or system installer is shipped. Historical requirements below are the design contract; README.md and SOFTWARE-EVIDENCE.md identify which software portions are now implemented and tested. Physical/Lapis lifecycle acceptance is still separate.
 
 ## 1. Separate the layers
 
@@ -27,7 +27,9 @@ An ARM64 Debian .deb is optional later, NOT the default Lapis installation path:
 
 Stage all three executables in a versioned private directory. Build/install performs zero hardware opens, does not launch the detector, does not enable services, and does not probe USB to validate installation. The default installation path must be inert. Generate a manifest and uninstall plan before installing.
 
-## 4. Required changes before any active Lapis release
+## 4. Required guarantees before any active Lapis release
+
+Selection, userspace bounds, explicit profiles and local binding now have candidate implementations. These requirements remain subject to the precise software/physical boundaries in SOFTWARE-EVIDENCE.md; they are not a claim of a hardware pass.
 
 ### Selection before opening
 

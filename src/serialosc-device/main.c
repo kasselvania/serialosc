@@ -18,6 +18,7 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 
 #include <uv.h>
 #include <monome.h>
@@ -26,6 +27,10 @@
 #include <optparse/optparse.h>
 
 #include <serialosc/serialosc.h>
+#ifdef SOSC_LAPIS_STRICT
+#include <serialosc/lapis_usb_policy.h>
+#include <serialosc/surface.h>
+#endif
 
 int
 main(int argc, char **argv)
@@ -62,6 +67,20 @@ main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 
+#ifdef SOSC_LAPIS_STRICT
+	/* Validate explicit profile/identity BEFORE any tty open. No probe fallback. */
+	sosc_lapis_usb_policy_t policy;
+	sosc_surface_profile_t profile;
+	if (sosc_lapis_usb_policy_from_env(&policy) ||
+	    policy.mode != SOSC_LAPIS_USB_STRICT ||
+	    sosc_surface_parse_profile(&profile, policy.serial, getenv("LAPIS_SERIALOSC_SURFACES")) ||
+	    !config_dir || !*config_dir ||
+	    !sosc_lapis_usb_validate_devnode(&policy, device_arg)) {
+		fprintf(stderr, "%s: strict Lapis identity/profile/config validation failed; no device opened\n", argv[0]);
+		return EXIT_FAILURE;
+	}
+#endif
+
 	if (!(device = monome_open(device_arg))) {
 		fprintf(stderr, "%s: failed to open device %s\n", argv[0], device_arg);
 		return EXIT_FAILURE;
@@ -72,8 +91,8 @@ main(int argc, char **argv)
 #endif
 
 	sosc_zeroconf_init();
-	sosc_server_run(config_dir, device);
+	int server_result = sosc_server_run(config_dir, device);
 	monome_close(device);
 
-	return EXIT_SUCCESS;
+	return server_result ? EXIT_FAILURE : EXIT_SUCCESS;
 }

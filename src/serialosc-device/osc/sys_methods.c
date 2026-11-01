@@ -149,6 +149,7 @@ OSC_HANDLER_FUNC(sys_cable_legacy_handler)
 	sosc_state_t *state = user_data;
 	monome_rotate_t new, old;
 
+	sosc_runtime_expire_lease_if_due(state);
 	old = monome_get_rotation(state->monome);
 
 	switch (argv[0]->s) {
@@ -194,6 +195,7 @@ OSC_HANDLER_FUNC(sys_rotation_handler)
 	sosc_state_t *state = user_data;
 	monome_rotate_t new, old;
 
+	sosc_runtime_expire_lease_if_due(state);
 	old = monome_get_rotation(state->monome);
 	new = argv[0]->i / 90;
 
@@ -216,6 +218,8 @@ OSC_HANDLER_FUNC(sys_port_handler)
 
 	if (new_port < 0 || new_port > 65535)
 		return 1;
+	/* Expiry restores the saved host; never capture the expired lease host. */
+	sosc_runtime_expire_lease_if_due(state);
 	host = lo_address_get_hostname(state->outgoing);
 	if (!host)
 		return 1;
@@ -254,6 +258,8 @@ OSC_HANDLER_FUNC(sys_host_handler)
 
 	if (!*requested_host)
 		return 1;
+	/* Expiry clears callback authority before the old port is captured. */
+	sosc_runtime_expire_lease_if_due(state);
 	portstr(port, state->destination_port);
 	new = lo_address_new(requested_host, port);
 	config_host = s_strdup(requested_host);

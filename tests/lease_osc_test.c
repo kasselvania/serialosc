@@ -25,6 +25,7 @@
 #include <serialosc/osc.h>
 #include <serialosc/platform.h>
 #include <serialosc/serialosc.h>
+#include "mock_persistence.h"
 
 struct monome {
 	int cols;
@@ -166,7 +167,7 @@ int
 main(void)
 {
 	monome_t monome = {.cols = 16, .rows = 8};
-	sosc_state_t state = {0};
+	sosc_state_t state = {.persist_free = mock_persist_free};
 	capture_t capture = {0};
 	lo_server callback;
 	lo_address device;

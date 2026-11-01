@@ -1,0 +1,33 @@
+--- a/src/server.c
++++ b/src/server.c
+@@ -591,7 +591,10 @@
+         if (ai)
+             freeaddrinfo(ai);
+ 
+-        ret = getaddrinfo(NULL, service, &hints, &ai);
++        /* Lapis private build: an explicit unicast IP is a local bind
++         * address, not merely an outbound-interface hint. Multicast and
++         * callers without an IP retain their upstream wildcard behavior. */
++        ret = getaddrinfo(group ? NULL : ip, service, &hints, &ai);
+ 
+         s->ai = ai;
+         s->sockets[0].fd = -1;
+@@ -726,6 +729,18 @@
+         lo_client_sockets.tcp = s->sockets[0].fd;
+     }
+ 
++    /* Resolve port "0" from the actual socket for explicit unicast binds.
++     * Do not change the historical random-port behavior of other callers. */
++    if (ip && !group) {
++        socklen_t bound_len = used->ai_addrlen;
++        if (getsockname(s->sockets[0].fd, used->ai_addr, &bound_len) < 0) {
++            err = geterror();
++            lo_throw(s, err, strerror(err), "getsockname()");
++            lo_server_free(s);
++            return NULL;
++        }
++    }
++
+     if (used->ai_family == PF_INET6) {
+         struct sockaddr_in6 *addr = (struct sockaddr_in6 *) used->ai_addr;
+         s->port = ntohs(addr->sin6_port);

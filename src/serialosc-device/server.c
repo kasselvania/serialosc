@@ -34,6 +34,9 @@
 #include <serialosc/lease_runtime.h>
 #include <serialosc/osc.h>
 #include <serialosc/ipc.h>
+#include <serialosc/network.h>
+#include <serialosc/surface.h>
+#include <serialosc/event_delivery.h>
 
 
 #define DEFAULT_OSC_PREFIX      "/monome"
@@ -57,80 +60,6 @@ null_if_zero(const char *s)
 	if (!*s)
 		return NULL;
 	return s;
-}
-
-/*************************************************************************
- * device -> OSC messages
- *************************************************************************/
-
-static void
-handle_press(const monome_event_t *e, void *data)
-{
-	sosc_state_t *state = data;
-	char *cmd;
-
-	if (state->destination_port == 0)
-		return;
-	cmd = osc_path("grid/key", state->osc_prefix);
-	lo_send_from(state->outgoing, state->server, LO_TT_IMMEDIATE, cmd, "iii",
-	             e->grid.x, e->grid.y, e->event_type == MONOME_BUTTON_DOWN);
-	s_free(cmd);
-}
-
-static void
-handle_enc_delta(const monome_event_t *e, void *data)
-{
-	sosc_state_t *state = data;
-	char *cmd;
-
-	if (state->destination_port == 0)
-		return;
-	cmd = osc_path("enc/delta", state->osc_prefix);
-	lo_send_from(state->outgoing, state->server, LO_TT_IMMEDIATE, cmd, "ii",
-	             e->encoder.number, e->encoder.delta);
-	s_free(cmd);
-}
-
-static void
-handle_enc_key(const monome_event_t *e, void *data)
-{
-	sosc_state_t *state = data;
-	char *cmd;
-
-	if (state->destination_port == 0)
-		return;
-	cmd = osc_path("enc/key", state->osc_prefix);
-	lo_send_from(state->outgoing, state->server, LO_TT_IMMEDIATE, cmd, "ii",
-	             e->encoder.number, e->event_type == MONOME_ENCODER_KEY_DOWN);
-	s_free(cmd);
-}
-
-static void
-handle_tilt(const monome_event_t *e, void *data)
-{
-	sosc_state_t *state = data;
-	char *cmd;
-
-	if (state->destination_port == 0)
-		return;
-	cmd = osc_path("tilt", state->osc_prefix);
-	lo_send_from(state->outgoing, state->server, LO_TT_IMMEDIATE, cmd, "iiii",
-	             e->tilt.sensor, e->tilt.x, e->tilt.y, e->tilt.z);
-	s_free(cmd);
-}
-
-static void
-send_connection_status(sosc_state_t *state, int status)
-{
-	char *cmd, *cmds[] = {
-		"/sys/disconnect",
-		"/sys/connect"
-	};
-
-	cmd = cmds[status & 1];
-	if (state->destination_port == 0)
-		return;
-	lo_send_from(state->outgoing, state->server, LO_TT_IMMEDIATE, cmd, "");
 }
 
 #ifndef WIN32
@@ -225,24 +154,34 @@ send_osc_port_change(int fd, uint16_t port)
 }
 #endif
 
-void
+int
 sosc_server_run(const char *config_dir, monome_t *monome)
 {
 	char *svc_name;
+	int result = 1;
 	sosc_state_t state = {
 		.monome = monome,
+		.config_dir = config_dir,
+		.persist_free = sosc_config_persist_free,
 
 		.ipc_in_fd  = (!isatty(STDIN_FILENO))  ? STDIN_FILENO  : -1,
 		.ipc_out_fd = (!isatty(STDOUT_FILENO)) ? STDOUT_FILENO : -1
 	};
 
-	if (sosc_config_read(config_dir, monome_get_serial(state.monome), &state.config)) {
-		fprintf(
-			stderr, "serialosc [%s]: couldn't read config, using defaults\n",
-			monome_get_serial(state.monome));
+	if (sosc_surface_configure(&state, monome_get_serial(monome),
+			getenv("LAPIS_SERIALOSC_SURFACES"))) {
+		fprintf(stderr, "serialosc: missing or invalid strict surface profile; refusing startup\n");
+		goto err_server_new;
 	}
 
-	if (!(state.server = lo_server_new(null_if_zero(state.config.server.port),
+	if (sosc_config_read(config_dir, monome_get_serial(state.monome), &state.config)) {
+		fprintf(
+			stderr, "serialosc [%s]: couldn't read config; refusing worker startup\n",
+			monome_get_serial(state.monome));
+		goto err_server_new;
+	}
+
+	if (!(state.server = sosc_network_server_new(null_if_zero(state.config.server.port),
 					lo_error)))
 		goto err_server_new;
 
@@ -282,19 +221,18 @@ sosc_server_run(const char *config_dir, monome_t *monome)
 	}
 #endif
 
-#define HANDLE(ev, cb) monome_register_handler(state.monome, ev, cb, &state)
-	HANDLE(MONOME_BUTTON_DOWN, handle_press);
-	HANDLE(MONOME_BUTTON_UP, handle_press);
-	HANDLE(MONOME_ENCODER_DELTA, handle_enc_delta);
-	HANDLE(MONOME_ENCODER_KEY_DOWN, handle_enc_key);
-	HANDLE(MONOME_ENCODER_KEY_UP, handle_enc_key);
-	HANDLE(MONOME_TILT, handle_tilt);
-#undef HANDLE
+	sosc_event_register_handlers(&state);
 
 	monome_set_rotation(state.monome, state.config.dev.rotation);
-	if (sosc_runtime_dark_surface(&state))
-		fprintf(stderr, "serialosc [%s]: warning: could not dark all output\n",
+	if (sosc_runtime_dark_surface(&state)) {
+		fprintf(stderr, "serialosc [%s]: could not dark all output\n",
 			monome_get_serial(state.monome));
+#ifdef SOSC_LAPIS_STRICT
+		/* Do not announce readiness on a failed strict startup write. */
+		free(svc_name);
+		goto err_svc_name;
+#endif
+	}
 
 	osc_register_sys_methods(&state);
 	osc_register_lease_methods(&state);
@@ -314,9 +252,13 @@ sosc_server_run(const char *config_dir, monome_t *monome)
 	sosc_zeroconf_register(&state, svc_name);
 	free(svc_name);
 
-	send_connection_status(&state, 1);
-	sosc_event_loop(&state);
-	send_connection_status(&state, 0);
+	sosc_event_send_connection_status(&state, 1);
+	result = sosc_event_loop(&state) ? 1 : 0;
+	sosc_event_send_connection_status(&state, 0);
+	if (sosc_runtime_shutdown(&state)) {
+		fprintf(stderr, "serialosc: strict shutdown could not dark all output; callback authority cleared\n");
+		result = 1;
+	}
 
 	sosc_zeroconf_unregister(&state);
 
@@ -339,4 +281,5 @@ err_lo_addr:
 err_server_new:
 	s_free(state.config.app.osc_prefix);
 	s_free(state.config.app.host);
+	return result;
 }
