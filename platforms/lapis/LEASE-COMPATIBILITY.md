@@ -38,3 +38,7 @@ Current Lapis verification:
 - Abnormal Arc startup remains a blocking gate, not fixed by lease support.
 
 The retired Lapis main-based prototype had none of the lease changes. Do not identify it with the Mac candidate. See INTEGRATION.md before any active build/installation.
+
+## PlugData implementation detail: release is not a destructor guarantee
+
+The feature branch implements lease acquire/renew/release and verification in monome_session.lua; monome-session-core.pd_lua forwards those controls into the Pd/Lua session. Explicit release sends /sys/lease/release with the session token and callback endpoint. However, the Pd/Lua finalize() calls session:abandon(), which releases the local claim and clears local lease/request flags; it does NOT send or verify a remote release. It warns when destroyed while connected/claiming/releasing. Unexpected patch or host teardown therefore relies on lease renewal stopping and the daemon expiring/darkening the device, not a guaranteed close-time release packet. Lapis integration must retain this distinction and test actual PlugData/host scheduling.
